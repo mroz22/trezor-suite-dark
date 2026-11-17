@@ -29,7 +29,8 @@ export const initBackground: ModuleInitBackground = ({ store, mainWindowProxy, l
             case 'win32':
                 return 'trayWin.ico';
             case 'darwin':
-                return 'trayMacTemplate.png';
+                // Not a "*Template" image: macOS renders those monochrome, which would drop the brand color.
+                return 'trayMac.png';
             default:
                 return 'trayLin.png';
         }
