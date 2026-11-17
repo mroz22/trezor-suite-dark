@@ -8556,22 +8556,6 @@ export const messages = defineMessages({
         defaultMessage:
             'It seems you are running multiple instances of the app. If you are using Suite in other window or tab, close it and refresh the app.',
     },
-    TR_BUG: {
-        id: 'TR_BUG',
-        defaultMessage: 'Bug',
-    },
-    TR_SUGGESTION: {
-        id: 'TR_SUGGESTION',
-        defaultMessage: 'Feedback',
-    },
-    TR_GUIDE_BUG_LABEL: {
-        id: 'TR_GUIDE_BUG_LABEL',
-        defaultMessage: 'Is something wrong?',
-    },
-    TR_GUIDE_SUGGESTION_LABEL: {
-        id: 'TR_GUIDE_SUGGESTION_LABEL',
-        defaultMessage: 'How are we doing?',
-    },
     TR_GUIDE_SUPPORT: {
         id: 'TR_GUIDE_SUPPORT',
         defaultMessage: 'Trezor Support',
@@ -8774,10 +8758,6 @@ export const messages = defineMessages({
     TR_GUIDE_VIEW_HEADLINES_SUPPORT_FEEDBACK_SELECTION: {
         id: 'TR_GUIDE_VIEW_HEADLINES_SUPPORT_FEEDBACK_SELECTION',
         defaultMessage: 'Support & Feedback',
-    },
-    TR_GUIDE_VIEW_HEADLINE_HELP_US_IMPROVE: {
-        id: 'TR_GUIDE_VIEW_HEADLINE_HELP_US_IMPROVE',
-        defaultMessage: 'Help us improve',
     },
     TR_GUIDE_VIEW_HEADLINE_NEED_HELP: {
         id: 'TR_GUIDE_VIEW_HEADLINE_NEED_HELP',
