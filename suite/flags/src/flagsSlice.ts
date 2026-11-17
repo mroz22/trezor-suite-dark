@@ -110,7 +110,7 @@ export const flagsInitialState: FlagsState = {
     solanaLimitedHistoryBannerClosed: false,
     hasSeenDisconnectTooltip: false,
     showNoDeviceEshopSidebarBanner: true,
-    areNoDeviceEshopBannersDisabled: false,
+    areNoDeviceEshopBannersDisabled: true, // Suite Dark: no Trezor shop banners
     // In a fresh Suite, all content is new, so we don't need to distinguish individual features as "new" → mark all as seen.
     // See the unit test, which specifies this behavior.
     seenNewContentIndicators: typedObjectFromEntries(
