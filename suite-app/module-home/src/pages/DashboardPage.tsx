@@ -3,10 +3,7 @@ import { Context, ExperimentId, ExperimentWrapper } from '@suite-common/message-
 import { Column } from '@trezor/components';
 import {
     AssetsView,
-    DashboardFooter,
-    DashboardPromoBanner,
     HomeAssetDashboard,
-    OnboardingFeedbackBanner,
     OutOfQuotaBanner,
     PageHeader,
     PortfolioCard,
@@ -34,15 +31,14 @@ const DashboardAsItWas = () => (
         <Column gap={24}>
             <DashboardNotices />
             <PortfolioCard />
-            <OnboardingFeedbackBanner />
         </Column>
-        <DashboardPromoBanner />
         <AssetsView />
     </Column>
 );
 
 export const DashboardPage = () => {
-    useLayout('Home', <PageHeader />, <DashboardFooter />);
+    // Suite Dark: no promo carousel, onboarding survey banner or footer with Trezor app promos.
+    useLayout('Home', <PageHeader />);
     useNotificationForDisconnectedDevice();
 
     return (
