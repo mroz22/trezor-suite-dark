@@ -20,7 +20,8 @@ const initialState: MessageSystemState = {
 
     validExperiments: [],
 
-    configSource: 'remote',
+    // Suite Dark: only the config bundled at build time, nothing is fetched from data.trezor.io.
+    configSource: 'local',
 
     manuallyAddedMessageIds: {},
 
