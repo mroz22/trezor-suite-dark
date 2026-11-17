@@ -3922,7 +3922,7 @@ export const messages = defineMessages({
         id: 'TR_SET_PIN',
     },
     TR_PASSWORD_MANAGER: {
-        defaultMessage: 'Migrate Dropbox passwords',
+        defaultMessage: 'Password manager',
         id: 'TR_PASSWORD_MANAGER',
     },
     TR_SETTINGS: {
@@ -6249,7 +6249,7 @@ export const messages = defineMessages({
     },
     TR_EXPERIMENTAL_PASSWORD_MANAGER: {
         id: 'TR_EXPERIMENTAL_PASSWORD_MANAGER',
-        defaultMessage: 'Migrate Dropbox passwords',
+        defaultMessage: 'Password manager',
     },
     TR_EXPERIMENTAL_PASSWORD_MANAGER_DESCRIPTION: {
         id: 'TR_EXPERIMENTAL_PASSWORD_MANAGER_DESCRIPTION',
