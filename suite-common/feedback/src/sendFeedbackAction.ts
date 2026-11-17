@@ -2,30 +2,16 @@ import { notificationsActions } from '@suite-common/toast-notifications';
 import { createThunk } from '@trezor/redux-utils';
 
 import { type Feedback } from './feedback';
-import { getFeedbackUrl } from './getFeedbackUrl';
 
 const FEEDBACK_MODULE_PREFIX = '@suite/feedback';
 
+// Suite Dark: feedback forms are removed. A form upstream adds later still sends nothing to
+// data.trezor.io: the thunk rejects without a request and the form shows its send error.
 export const sendFeedbackThunk = createThunk<void, Feedback, void>(
     `${FEEDBACK_MODULE_PREFIX}/sendFeedback`,
-    async ({ type, payload }, { dispatch, rejectWithValue }) => {
-        const url = getFeedbackUrl(type);
-        const params = new URLSearchParams(
-            Object.entries(payload)
-                .filter(([, v]) => v != null)
-                .map(([k, v]) => [k, String(v)]),
-        );
+    (_feedback, { dispatch, rejectWithValue }) => {
+        dispatch(notificationsActions.addToast({ type: 'user-feedback-send-error' }));
 
-        try {
-            await fetch(`${url}?${params.toString()}`, {
-                method: 'GET',
-            });
-            dispatch(notificationsActions.addToast({ type: 'user-feedback-send-success' }));
-        } catch (err) {
-            dispatch(notificationsActions.addToast({ type: 'user-feedback-send-error' }));
-            console.error('failed to send user feedback', err);
-
-            return rejectWithValue('Failed to send feedback');
-        }
+        return rejectWithValue('Suite Dark sends no feedback');
     },
 );
