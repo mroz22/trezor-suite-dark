@@ -55,29 +55,12 @@ describe('sendHomeAssetTableFeedbackThunk', () => {
         fetchSpy.mockRestore();
     });
 
-    it('sends a dashboard suggestion tagged with the table and the active experiment variants', async () => {
-        await sendFeedback();
-
-        const [url] = fetchSpy.mock.calls[0] ?? [];
-        const params = new URL(String(url)).searchParams;
-
-        expect(Object.fromEntries(params)).toEqual(
-            expect.objectContaining({
-                category: 'dashboard',
-                context: 'homeAssetTable',
-                feature: 'homeAssetTable',
-                rating: '4',
-                description: 'Nice table',
-                activeExperimentsWithVariants: 'assetFirstHomeTable:B',
-                platform: 'mobile',
-            }),
-        );
-    });
-
-    it('remembers the feedback was sent, so the form does not come back', async () => {
+    // Suite Dark: sendFeedbackThunk never sends, so the table feedback reaches no server.
+    it('sends nothing and keeps the form', async () => {
         const actions = await sendFeedback();
 
-        expect(actions).toContainEqual(closeHomeAssetTableFeedback());
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(actions).not.toContainEqual(closeHomeAssetTableFeedback());
     });
 
     it('keeps the form when sending fails, so the feedback can be sent again', async () => {

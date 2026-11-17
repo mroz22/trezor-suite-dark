@@ -1,4 +1,3 @@
-import { events, injectDesktopAnalytics } from '@suite/analytics';
 import { UpdateState, selectDesktopUpdate } from '@suite/desktop-update';
 import { Translation, type TranslationKey } from '@suite/intl';
 import { selectSelectedDevice } from '@suite-common/device';
@@ -7,14 +6,7 @@ import { Box, CardList, Column, Icon, IconCircle, Row, Text } from '@trezor/comp
 import { useServices } from '@trezor/dependency-injection';
 import { getFirmwareVersion } from '@trezor/device-utils';
 import { isDesktop } from '@trezor/env-utils';
-import {
-    ArrowLineUpRightIcon,
-    BugBeetleIcon,
-    CaretRightIcon,
-    ChatsIcon,
-    LifebuoyIcon,
-    MegaphoneIcon,
-} from '@trezor/icons';
+import { ArrowLineUpRightIcon, ChatsIcon, LifebuoyIcon } from '@trezor/icons';
 import { injectDispatch } from '@trezor/redux-utils';
 import { TREZOR_FORUM_URL } from '@trezor/urls';
 
@@ -36,7 +28,7 @@ const StatusText = ({ id }: StatusTextProps) => (
 );
 
 export const SupportFeedbackSelection = () => {
-    const { analytics, dispatch } = useServices(injectDesktopAnalytics, injectDispatch);
+    const { dispatch } = useServices(injectDispatch);
     const desktopUpdate = useSelector(selectDesktopUpdate);
     const device = useSelector(selectSelectedDevice);
 
@@ -94,20 +86,6 @@ export const SupportFeedbackSelection = () => {
     const firmwareStatusId = getFirmwareStatusId();
 
     const goBack = () => dispatch(setView('GUIDE_DEFAULT'));
-    const handleBugButtonClick = () => {
-        dispatch(setView('FEEDBACK_BUG'));
-        analytics.report({
-            type: events.guideFeedbackNavigationEvent.name,
-            payload: { type: 'bug' },
-        });
-    };
-    const handleFeedbackButtonClick = () => {
-        dispatch(setView('FEEDBACK_SUGGESTION'));
-        analytics.report({
-            type: events.guideFeedbackNavigationEvent.name,
-            payload: { type: 'suggestion' },
-        });
-    };
 
     return (
         <GuideViewWrapper>
@@ -118,86 +96,6 @@ export const SupportFeedbackSelection = () => {
             <GuideContent>
                 <Column justifyContent="space-between" height="100%">
                     <Box flex="1">
-                        <Box margin={{ bottom: 16 }}>
-                            <GuideSectionHeadline id="TR_GUIDE_VIEW_HEADLINE_HELP_US_IMPROVE" />
-                            <CardList>
-                                <CardList.Item
-                                    paddingType="medium"
-                                    onClick={handleBugButtonClick}
-                                    data-testid="@guide/feedback/bug"
-                                >
-                                    <Row gap={16} flex="1" overflow="hidden">
-                                        <IconCircle
-                                            icon={BugBeetleIcon}
-                                            size={32}
-                                            intent="neutral"
-                                        />
-                                        <Column alignItems="flex-start" overflow="hidden">
-                                            <Text
-                                                typographyStyle="body-md"
-                                                as="div"
-                                                maxWidth="100%"
-                                            >
-                                                <Translation id="TR_BUG" />
-                                            </Text>
-                                            <Text
-                                                typographyStyle="body-sm"
-                                                intent="neutral"
-                                                priority="secondary"
-                                                as="div"
-                                                maxWidth="100%"
-                                            >
-                                                <Translation id="TR_GUIDE_BUG_LABEL" />
-                                            </Text>
-                                        </Column>
-                                    </Row>
-                                    <Icon
-                                        as={CaretRightIcon}
-                                        size={20}
-                                        intent="neutral"
-                                        priority="secondary"
-                                    />
-                                </CardList.Item>
-                                <CardList.Item
-                                    paddingType="medium"
-                                    onClick={handleFeedbackButtonClick}
-                                    data-testid="@guide/feedback/suggestion"
-                                >
-                                    <Row gap={16} flex="1" overflow="hidden">
-                                        <IconCircle
-                                            icon={MegaphoneIcon}
-                                            size={32}
-                                            intent="neutral"
-                                        />
-                                        <Column alignItems="flex-start" overflow="hidden">
-                                            <Text
-                                                typographyStyle="body-md"
-                                                as="div"
-                                                maxWidth="100%"
-                                            >
-                                                <Translation id="TR_SUGGESTION" />
-                                            </Text>
-                                            <Text
-                                                typographyStyle="body-sm"
-                                                intent="neutral"
-                                                priority="secondary"
-                                                as="div"
-                                                maxWidth="100%"
-                                            >
-                                                <Translation id="TR_GUIDE_SUGGESTION_LABEL" />
-                                            </Text>
-                                        </Column>
-                                    </Row>
-                                    <Icon
-                                        as={CaretRightIcon}
-                                        size={20}
-                                        intent="neutral"
-                                        priority="secondary"
-                                    />
-                                </CardList.Item>
-                            </CardList>
-                        </Box>
-
                         <Box>
                             <GuideSectionHeadline id="TR_GUIDE_VIEW_HEADLINE_NEED_HELP" />
                             <CardList>
