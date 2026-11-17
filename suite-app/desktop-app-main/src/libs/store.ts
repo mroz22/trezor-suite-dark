@@ -71,7 +71,7 @@ export class Store {
 
     public getTorSettings() {
         return this.store.get('torSettings', {
-            running: false,
+            running: true, // Suite Dark: route traffic through Tor from the first start
             port: 9050,
             controlPort: 9051,
             host: '127.0.0.1',
