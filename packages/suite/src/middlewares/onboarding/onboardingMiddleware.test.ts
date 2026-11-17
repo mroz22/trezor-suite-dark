@@ -58,7 +58,8 @@ const getInitialState = (
         ...device,
     },
     recovery: recoveryReducer(undefined, { type: 'foo' } as any),
-    analytics: analyticsInitialState,
+    // Suite Dark: analytics is confirmed by default; these tests cover the unconfirmed upstream path.
+    analytics: { ...analyticsInitialState, confirmed: false },
 });
 
 const initStore = (state: State) =>

@@ -19,8 +19,9 @@ export type AnalyticsRootState = {
 export const analyticsInitialState: AnalyticsState = {
     sessionId: undefined,
     instanceId: undefined,
-    enabled: undefined,
-    confirmed: false,
+    // Suite Dark: analytics stays off and the consent screen is skipped, there is nothing to consent to.
+    enabled: false,
+    confirmed: true,
     customAnalyticsUrl: undefined,
     loggerEnabled: undefined,
 };
