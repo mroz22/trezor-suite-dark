@@ -20,6 +20,8 @@ const messageSystemReducer = prepareMessageSystemReducer({
 const getInitialState = (state?: MessageSystemState): MessageSystemRootState => ({
     messageSystem: {
         ...messageSystemReducer(undefined, { type: 'foo' } as any),
+        // Suite Dark: the bundled config is the default; these tests cover the remote fetch path.
+        configSource: 'remote',
         ...state,
     },
 });
