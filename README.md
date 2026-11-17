@@ -1,3 +1,13 @@
+# Suite Dark
+
+Suite Dark is a desktop-only, privacy-first fork of [Trezor Suite](https://github.com/trezor/trezor-suite). It
+sends no telemetry and no feedback, uses only the message-system configuration bundled at build time, shows no promotional
+banners and no trading, starts with Tor and discreet mode on and mixes coins through a public coinjoin coordinator. It is not a
+SatoshiLabs product; Trezor Support does not cover it.
+
+What the fork changes, how to set it up and how to work on it is in [SUITE_DARK.md](SUITE_DARK.md). Everything
+below is the upstream Trezor Suite readme; clone `mroz22/trezor-suite-dark` instead of `trezor/trezor-suite`.
+
 # TREZOR SUITE MONOREPO
 
 Welcome to the Trezor Suite repository! This repository contains the source code for 3 projects:
