@@ -57,7 +57,8 @@ export const mockInitialAppState = {
         torStatus: TorStatus.Disabled,
         torBootstrap: null,
     } as TorState,
-    suiteSettings: suiteSettingsInitialState,
+    // Suite Dark: the dark theme is the default; keep upstream tests on the light one they assert.
+    suiteSettings: { ...suiteSettingsInitialState, theme: { variant: 'light' } },
     debug: debugInitialState,
     flags: flagsInitialState,
     locks: locksInitialState,
