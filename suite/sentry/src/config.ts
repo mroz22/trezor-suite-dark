@@ -144,7 +144,8 @@ const isProd = isCodesignBuild();
 
 // Common Sentry config for all Suite Desktop & Web envs
 export const SENTRY_CONFIG = {
-    dsn: 'https://6d91ca6e6a5d4de7b47989455858b5f6@o117836.ingest.sentry.io/5193825',
+    // Suite Dark: no error reporting. An empty DSN turns the Sentry SDK into a no-op in both processes.
+    dsn: '',
 
     beforeSend,
     enabled: !isDevEnv, // set to true to enable Sentry logging while testing locally

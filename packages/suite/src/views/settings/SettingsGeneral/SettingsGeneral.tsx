@@ -33,7 +33,6 @@ import { useSelector } from '#src/hooks/suite/useSelector';
 import { useIsContentBelowBreakpoint } from '#src/support/suite/ContentFlex';
 
 import { AddressDisplay } from './AddressDisplay';
-import { Analytics } from './Analytics';
 import { AutoEject } from './AutoEject';
 import { AutoStart } from './AutoStart';
 import { AutomaticUpdate } from './AutomaticUpdate';
@@ -139,7 +138,6 @@ export const SettingsGeneral = ({ torSettings }: SettingsGeneralProps) => {
                 icon={AppWindowIcon}
             >
                 <Theme />
-                <Analytics />
                 <ShowApplicationLog />
                 <ClearStorage />
                 <AutomaticUpdate />
