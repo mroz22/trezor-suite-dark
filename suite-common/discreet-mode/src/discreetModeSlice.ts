@@ -9,7 +9,7 @@ type StorageLoadDiscreetModeAction = PayloadAction<{
 }>;
 
 const initialState: DiscreetModeState = {
-    isActive: false,
+    isActive: true, // Suite Dark: balances are hidden until the user reveals them
 };
 
 export const discreetModeSlice = createSlice({
