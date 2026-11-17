@@ -17,7 +17,6 @@ import { HomeAssetFeedback } from './HomeAssetFeedback';
 import { HomeAssetTable } from './HomeAssetsTable/HomeAssetTable';
 import { HomeBalanceCard } from './HomeBalance/HomeBalanceCard';
 import { getHomeAssetEmptyStateKind } from './homeAssetEmptyStateKind';
-import { DashboardPromoBanner } from '../dashboard/DashboardPromoBanner/DashboardPromoBanner';
 
 export const HomeAssetDashboard = memo(() => {
     const { analytics } = useServices(injectDesktopAnalytics);
@@ -36,7 +35,6 @@ export const HomeAssetDashboard = memo(() => {
     return (
         <Column gap={16} data-testid="@dashboard/home-asset">
             <HomeBalanceCard />
-            <DashboardPromoBanner />
             <HomeAssetTable />
             <HomeAssetFeedback />
             <Nfts
