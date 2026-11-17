@@ -76,7 +76,7 @@ export type SuiteSettingsSliceDeps = ActionTypesDep<'storageLoad'> &
 
 export const suiteSettingsInitialState: SuiteSettingsState = {
     theme: {
-        variant: 'light',
+        variant: 'dark', // Suite Dark: dark until the user picks another theme in Settings
     },
     language: 'en-US',
     torOnionLinks: isWeb(),
@@ -101,7 +101,7 @@ export const suiteSettingsInitialState: SuiteSettingsState = {
     },
     autodetect: {
         language: true,
-        theme: true,
+        theme: false, // Suite Dark: do not follow the OS theme by default
     },
     isTestnetNetworksEnabled: false,
     isNftSectionEnabled: false,
