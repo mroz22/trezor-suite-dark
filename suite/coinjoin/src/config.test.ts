@@ -19,8 +19,10 @@ describe('getCoinjoinConfig', () => {
         warnSpy.mockRestore();
     });
 
-    it('btc and test have no coordinator, regtest has a local one', () => {
-        expect(getCoinjoinConfig(btcSymbol).coordinatorUrl).toBeUndefined();
+    it('btc has the Suite Dark coordinator, test has none, regtest has a local one', () => {
+        expect(getCoinjoinConfig(btcSymbol).coordinatorUrl).toBe(
+            'https://coinjoin.kruw.io/wabisabi/',
+        );
         expect(getCoinjoinConfig(btcSymbol).wabisabiBackendUrl).toBeUndefined();
         expect(getCoinjoinConfig(testSymbol).coordinatorUrl).toBeUndefined();
         expect(getCoinjoinConfig(testSymbol).wabisabiBackendUrl).toBeUndefined();

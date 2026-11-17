@@ -16,14 +16,18 @@ export type CoinjoinNetworksConfig = CoinjoinBackendSettings &
 
 type ServerEnvironment = PartialRecord<CoinjoinServerEnvironment, CoinjoinNetworksConfig>;
 
-// The btc and test networks have no coordinator because the public ones shut down. Testers set
-// one through debug.coinjoinConfigOverride, see docs/features/coinjoin.md.
+// Suite Dark: btc uses the kruw.io coordinator below. The test network has no coordinator because the
+// public ones shut down; testers set one through debug.coinjoinConfigOverride, see docs/features/coinjoin.md.
 export const COINJOIN_NETWORKS: PartialRecord<'btc' | 'test' | 'regtest', ServerEnvironment> = {
     btc: {
         /* default, see getCoinjoinConfig */
         public: {
             network: 'btc',
             coordinatorName: 'CoinJoinCoordinatorIdentifier',
+            // Suite Dark: a public zero-fee WalletWasabi coordinator, so mixing works without
+            // a debug override. It runs no backend, so wabisabiBackendUrl stays unset and the
+            // coordinator version falls back to the client's stub values.
+            coordinatorUrl: 'https://coinjoin.kruw.io/wabisabi/',
             blockbookUrls: ['https://btc.trezor.io'],
             onionDomains: {
                 'trezor.io': 'trezoriovpjcahpzkrewelclulmszwbqpzmzgub37gbcjlvluxtruqad.onion',
