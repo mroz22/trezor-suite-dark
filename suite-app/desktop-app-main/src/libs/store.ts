@@ -62,7 +62,7 @@ export class Store {
     }
 
     public getThemeSettings() {
-        return this.store.get('themeSettings', 'system');
+        return this.store.get('themeSettings', 'dark'); // Suite Dark: matches the renderer default
     }
 
     public setThemeSettings(themeSettings: SuiteThemeVariant) {
