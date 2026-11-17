@@ -57,14 +57,15 @@ export const clearAppCache = () =>
 /**
  * By default, Electron uses the app name from package.json to construct the userData directory.
  * It's overwritten in electron-builder-config.js for builds. And here for local development.
- * Default (codesigned builds): @trezor/suite-desktop,
- * Dev (non-production builds): @trezor/suite-desktop-dev
- * Local development: @trezor/suite-desktop-local
+ * Default (codesigned builds): suitedark-desktop,
+ * Dev (non-production builds): suitedark-desktop-dev
+ * Local development: suitedark-desktop-local
  *
- * These directory names are the on-disk identity of existing installations, so they keep
- * the original package name and are spelled out rather than derived from it.
+ * These directory names are the on-disk identity of existing installations, so they are
+ * spelled out rather than derived from the package name.
  */
-const LOCAL_USER_DATA_DIR = '@trezor/suite-desktop-local';
+// Suite Dark: never share a profile with a Trezor Suite checkout on the same machine.
+const LOCAL_USER_DATA_DIR = 'suitedark-desktop-local';
 
 export const initUserData = () => {
     if (isDevEnv) {
