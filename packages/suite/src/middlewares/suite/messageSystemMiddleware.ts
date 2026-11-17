@@ -29,6 +29,10 @@ const actions: string[] = [
     geolocationActions.setCountryCode.type,
 ];
 
+// Suite Dark: a default coinjoin coordinator ships, so the bundled notice that coinjoin was
+// discontinued in Trezor Suite would be false here.
+const SUITE_DARK_HIDDEN_MESSAGE_IDS = ['dbfce56e-6b9b-4f88-8acc-38b9bc5dabeb'];
+
 const messageSystemMiddleware = createMiddleware((action, { next, dispatch, getState }) => {
     next(action);
 
@@ -36,7 +40,9 @@ const messageSystemMiddleware = createMiddleware((action, { next, dispatch, getS
         const config = selectMessageSystemConfig(getState());
         const validationParams = selectMessageSystemValidationParams(getState());
 
-        const validMessages = getValidMessages(config, validationParams);
+        const validMessages = getValidMessages(config, validationParams).filter(
+            message => !SUITE_DARK_HIDDEN_MESSAGE_IDS.includes(message.id),
+        );
         const validExperimentIds = getValidExperimentIds(config, validationParams);
         const categorizedValidMessages = categorizeMessages(validMessages);
 
