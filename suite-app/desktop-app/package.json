@@ -1,6 +1,6 @@
 {
     "name": "@suite-app/desktop-app",
-    "description": "Trezor Suite desktop application",
+    "description": "Suite Dark desktop application",
     "version": "1.0.0",
     "private": true,
     "author": "SatoshiLabs <info@satoshilabs.com>",

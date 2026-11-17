@@ -84,7 +84,7 @@ export const initBackground: ModuleInitBackground = ({
                 if (isArrayMember(pathname, TRADING_REDIRECT_PATHS) && (isMacOs() || isWindows())) {
                     receiver.activateRoute(pathname);
 
-                    return `trezorsuite:/${pathname}`;
+                    return `suitedark:/${pathname}`;
                 }
 
                 const address = receiver.getRouteAddress(pathname);

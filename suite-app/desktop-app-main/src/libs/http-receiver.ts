@@ -66,7 +66,7 @@ const applyTemplate = (content = 'You may now close this window.', options?: Tem
             <body>
                 <img style="margin-bottom:40px" alt="trezor logo" src="data:image/png;base64, ${trezorLogo}" />
                 ${content}
-                <a style="margin-top:40px" href="trezorsuite://">Go back to Trezor Suite</a>
+                <a style="margin-top:40px" href="suitedark://">Go back to Suite Dark</a>
             </body>
         </html>
     `;
