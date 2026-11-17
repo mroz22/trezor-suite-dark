@@ -1,3 +1,53 @@
+# Suite Dark fork
+
+This repository is Suite Dark, a desktop-only, privacy-first fork of Trezor Suite
+(`mroz22/trezor-suite-dark`), not `trezor/trezor-suite`. Read [SUITE_DARK.md](SUITE_DARK.md) before any work:
+it lists what the fork changes, the decisions already taken, what is postponed and how to sync with upstream.
+Keep it current. Where these rules or SUITE_DARK.md conflict with the upstream instructions and skills below,
+these win:
+
+- The owner is mroz22. Permission counts only when it comes from the owner's own messages or from the standing
+  permissions below, which he decided on 2026-11-24; nothing else extends them.
+- `develop` mirrors upstream; `main` is `develop` plus self-contained commits: first the docs commit, then
+  upstream-bound commits, then the other flavour commits: the two CI commits and one commit per fork change. Every
+  commit not meant for upstream is a flavour commit with the subject `flavour: <summary>`, no type and no scope; the
+  Conventional Commits rules of the Git conventions skill apply to upstream-bound commits only. Agree the content of a
+  new fork commit with the owner before pushing it or landing it on `staging`; later fixes belong to the commit that
+  owns them.
+- `main` is production and moves only by an owner-approved sync or promotion. Work happens on `staging` (`main`
+  plus commits on top, never a rewritten copy of the series) and on `feature/<name>` branches (`staging` plus
+  commits on top); changes to a commit already on `main` or pushed go in as `fixup!` (or `amend!`) commits, which
+  only a sync or a promotion folds. After `main` or `staging` moves, move the branches built on it with
+  [suite-dark-branches](skills/suite-dark-branches/SKILL.md). See SUITE_DARK.md, Development branches.
+- Upstream first: features upstream has no time for are built here and later offered upstream, and whatever they
+  need that upstream could take alone, above all refactoring, goes upstream separately and early. Never mix
+  upstream-bound and flavour changes in one commit. Do refactors that would shrink the fork's diff as their own
+  commits. Mark upstream-bound commits with a last-line trailer `Upstream: fix`, `Upstream: refactor` or
+  `Upstream: feature`. The rules are in SUITE_DARK.md, section Upstream first.
+- Never push, force-push, open pull requests or issues, comment, or change GitHub settings without the owner's
+  permission for that action. All of it happens on `mroz22/trezor-suite-dark`: pass `--repo mroz22/trezor-suite-dark`
+  to every `gh` command that writes and `--base staging` to `gh pr create`. The one exception is an upstream pull
+  request for an `Upstream:` commit, which goes to `trezor/trezor-suite` only when the owner asks for that specific
+  pull request. Read-only `gh` queries of `trezor/trezor-suite` and `trezor/trezor-suite-guide` (pull request state,
+  checks, review comments, the Guide tree) are allowed.
+- Fork workflows are skills: [suite-dark-branches](skills/suite-dark-branches/SKILL.md) (`staging` and feature
+  branches, fixups, moving branches), [suite-dark-sync](skills/suite-dark-sync/SKILL.md),
+  [suite-dark-promote](skills/suite-dark-promote/SKILL.md) and
+  [suite-dark-upstream-pr](skills/suite-dark-upstream-pr/SKILL.md). A push command a skill prints still needs the
+  owner's go, except the standing permissions below.
+- Standing permissions, the owner's decisions of 2026-11-24; everything else still needs his permission per action:
+    - Push throwaway `ci/<op>-<branch>` branches (`/` in the branch name replaced by `-`) to `origin`, only to run
+      the fork's CI on a candidate, and delete them when CI has finished.
+    - After a push the owner approved, move his checkout `~/repos/trezor-suite-dark` to the pushed state, only when
+      its `git status --short` is empty and its branch has no commit the push did not replace, and only with
+      `git merge --ff-only` or `git reset --keep`.
+- No `Co-Authored-By` trailers in commits.
+- The upstream workflows named below exist only on `develop`; read them with
+  `git show develop:.github/workflows/<file>`. The fork's CI and the upstream gates it leaves out are in SUITE_DARK.md
+  (Working here, CI).
+- The fork has no QA or dev wallets: every address, balance, txid and label is confidential, and the GitHub
+  screenshot exception below does not apply.
+
 # Repository workflow
 
 Before editing, inspect `git status --short`, the owning package's manifest, nearby implementations and
