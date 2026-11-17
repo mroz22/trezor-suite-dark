@@ -24,12 +24,12 @@ const getLinuxExecutable = () => {
 };
 
 const LINUX_AUTOSTART_DIR = '.config/autostart/';
-const LINUX_AUTOSTART_FILE = 'Trezor-Suite.desktop';
+const LINUX_AUTOSTART_FILE = 'Suite-Dark.desktop';
 const LINUX_DESKTOP = `[Desktop Entry]
 Type=Application
 Version=1.0
-Name=Trezor Suite
-Comment=Trezor Suite startup script
+Name=Suite Dark
+Comment=Suite Dark startup script
 Exec=${getLinuxExecutable()} --bridge-daemon
 StartupNotify=false
 Terminal=false
