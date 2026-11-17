@@ -11,7 +11,6 @@ import { type TradingType } from '@suite-common/trading';
 import { type TradingGetCryptoQuoteAmountProps } from '#src/types/trading/trading';
 
 import { TradingDetailFeedback } from './TradingDetailFeedback';
-import { TradingDetailSurvey } from './TradingDetailSurvey';
 
 interface AfterTradeExperimentProps {
     status: ExchangeTradeStatus | SellTradeStatus | BuyTradeStatus | undefined;
@@ -49,7 +48,8 @@ export const AfterTradeExperiment = ({
             },
             {
                 variant: 'C',
-                element: <TradingDetailSurvey />,
+                // Suite Dark: no paid feedback survey.
+                element: <></>,
             },
         ]}
     />
