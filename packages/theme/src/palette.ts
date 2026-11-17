@@ -1,6 +1,7 @@
+import { paletteSuiteDark } from './palette.suite-dark';
 import { type CSSColor } from './types';
 
-export const palette = {
+const paletteUpstream = {
     globalTransparent: '#FFFFFF00',
     lightNeutralGrey900: '#1F1F1F',
     lightNeutralGrey800: '#2E2E2E',
@@ -318,4 +319,11 @@ export const palette = {
     globalWhiteAlpha75: '#FFFFFF17',
     globalWhiteAlpha50: '#FFFFFF0F',
     globalWhiteAlpha25: '#FFFFFF08',
+} as const satisfies Record<string, CSSColor>;
+
+// Suite Dark: the brand overrides are a separate object, because repeating their keys in the literal above
+// would be a duplicate-key error (TS2783) and would conflict with every upstream palette change.
+export const palette = {
+    ...paletteUpstream,
+    ...paletteSuiteDark,
 } as const satisfies Record<string, CSSColor>;
