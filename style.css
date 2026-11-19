@@ -38,6 +38,14 @@ a:hover {
     text-decoration: underline;
 }
 
+.prose a,
+.note a,
+.disclaimer a {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+}
+
 a:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 3px;
@@ -299,6 +307,11 @@ pre code {
     font-size: 0.92rem;
 }
 
+pre:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+
 @media (max-width: 520px) {
     .nav {
         padding-bottom: 40px;
@@ -306,6 +319,15 @@ pre code {
 
     .lede {
         font-size: 1.08rem;
+    }
+
+    pre {
+        padding: 14px;
+    }
+
+    pre code {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
     }
 }
 
@@ -317,4 +339,13 @@ pre code {
     .btn {
         transition: none;
     }
+}
+
+.list-wide {
+    color: var(--fg);
+    margin-bottom: 20px;
+}
+
+.list-wide li {
+    margin-bottom: 12px;
 }
