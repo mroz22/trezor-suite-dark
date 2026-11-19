@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta
+            http-equiv="Content-Security-Policy"
+            content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'"
+        />
+        <meta name="referrer" content="no-referrer" />
+        <title>Suite Dark, a Trezor Suite that keeps to itself</title>
+        <meta
+            name="description"
+            content="Suite Dark is an unofficial desktop build of Trezor Suite. It reports nothing to Trezor, takes no remote configuration, shows no promotions and starts with Tor, hidden balances and a working coinjoin coordinator."
+        />
+        <meta name="color-scheme" content="dark" />
+        <meta property="og:title" content="Suite Dark, a Trezor Suite that keeps to itself" />
+        <meta
+            property="og:description"
+            content="An unofficial desktop build of Trezor Suite with no telemetry, no remote configuration and no promotions."
+        />
+        <meta property="og:type" content="website" />
+        <link rel="icon" type="image/png" href="icon-64.png" />
+        <link rel="apple-touch-icon" href="icon-192.png" />
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <header class="hero">
+            <nav class="nav" aria-label="Main">
+                <a class="brand" href="./">
+                    <img src="icon-64.png" alt="" width="32" height="32" />
+                    Suite Dark
+                </a>
+                <a class="nav-link" href="https://github.com/mroz22/trezor-suite-dark">Source ↗</a>
+            </nav>
+
+            <p class="eyebrow">Unofficial desktop build of Trezor Suite</p>
+            <h1>A Trezor Suite<br />that keeps to itself.</h1>
+            <p class="lede">
+                It is the same Trezor Suite desktop app. It sends Trezor no telemetry and no
+                feedback, takes no remote configuration and shows no promotions. Tor, hidden
+                balances and coinjoin are ready from the first start.
+            </p>
+            <div class="cta">
+                <a class="btn btn-primary" href="#build">Build it</a>
+                <a class="btn" href="https://github.com/mroz22/trezor-suite-dark/compare/develop...main"
+                    >Read every change ↗</a
+                >
+            </div>
+            <p class="status">
+                <strong>Early days.</strong> There are no downloads yet, so for now you build it
+                from source. Releases with automatic updates come next.
+            </p>
+        </header>
+
+        <main>
+            <section class="section" aria-labelledby="changes">
+                <h2 id="changes">What is different</h2>
+                <div class="grid">
+                    <article class="card">
+                        <h3>Nothing reported to Trezor</h3>
+                        <p>
+                            Sentry crash reports and analytics are off. That includes the events
+                            Trezor Suite sends even after you decline analytics. There is no consent
+                            screen, because there is nothing to agree to.
+                        </p>
+                    </article>
+                    <article class="card">
+                        <h3>No feedback forms</h3>
+                        <p>
+                            Ratings, surveys and bug report forms are gone. No free text, device
+                            model or firmware version goes to <code>data.trezor.io</code>.
+                        </p>
+                    </article>
+                    <article class="card">
+                        <h3>No remote messages</h3>
+                        <p>
+                            Notices and feature switches come only from the configuration built into
+                            the app. It never downloads a newer one.
+                        </p>
+                    </article>
+                    <article class="card">
+                        <h3>No promotions</h3>
+                        <p>
+                            The promo carousel, shop banners, app store badges, Refer-a-Friend and
+                            paid surveys are removed.
+                        </p>
+                    </article>
+                    <article class="card">
+                        <h3>Tor from the first start</h3>
+                        <p>
+                            The bundled Tor starts with the app. You do not have to remember to
+                            switch it on in Settings.
+                        </p>
+                    </article>
+                    <article class="card">
+                        <h3>Balances hidden</h3>
+                        <p>Discreet mode stays on until you reveal balances with the eye button.</p>
+                    </article>
+                    <article class="card">
+                        <h3>Coinjoin that runs</h3>
+                        <p>
+                            Trezor Suite ships without a coordinator since the public ones shut down.
+                            Suite Dark mixes Privacy accounts through
+                            <code>coinjoin.kruw.io</code>, a public coordinator that charges no
+                            coordination fee.
+                        </p>
+                    </article>
+                    <article class="card">
+                        <h3>Installs next to Trezor Suite</h3>
+                        <p>
+                            It has its own app id, settings folder and <code>suitedark://</code>
+                            links, and keeps its data apart from Trezor Suite's.
+                        </p>
+                    </article>
+                    <article class="card">
+                        <h3>Dark and orange</h3>
+                        <p>
+                            The dark theme is the default, in Bitcoin orange. Light and system themes
+                            are still in Settings.
+                        </p>
+                    </article>
+                </div>
+            </section>
+
+            <section class="section" aria-labelledby="same">
+                <h2 id="same">What stays the same</h2>
+                <p class="prose">
+                    Everything else. Every network Trezor Suite supports, Earn, Trading,
+                    WalletConnect, NFTs, the experimental password manager and all device features
+                    work as they do upstream. Suite Dark is not a cut-down wallet.
+                </p>
+            </section>
+
+            <section class="section" aria-labelledby="network">
+                <h2 id="network">What still goes over the network</h2>
+                <p class="prose">
+                    A wallet needs data. Suite Dark gets it the same way Trezor Suite does, and with
+                    Tor on, it sends these requests through Tor.
+                </p>
+                <ul class="list">
+                    <li>
+                        Blockchain data from Trezor's Blockbook servers. You can switch a network to
+                        your own Blockbook or Electrum server in its advanced settings.
+                    </li>
+                    <li>Exchange rates from Trezor's servers.</li>
+                    <li>Token definitions and firmware updates from <code>data.trezor.io</code>.</li>
+                    <li>The coinjoin coordinator, while an account mixes.</li>
+                    <li>Partner services in Trading and Earn, when you use them.</li>
+                </ul>
+            </section>
+
+            <section class="section" aria-labelledby="fork">
+                <h2 id="fork">How the fork works</h2>
+                <p class="prose">
+                    Suite Dark is a GitHub fork of <code>trezor/trezor-suite</code>. Its
+                    <code>develop</code> branch is an exact copy of Trezor Suite's. The
+                    <code>main</code> branch adds one commit per change and gets rebased when Trezor
+                    Suite moves on, so the whole difference fits on one page:
+                </p>
+                <ol class="commits">
+                    <li>Brand the desktop app as Suite Dark</li>
+                    <li>Stop reporting anything to Trezor servers</li>
+                    <li>Start with Tor and discreet mode on</li>
+                    <li>Remove promotional banners</li>
+                    <li>Mix through the kruw.io coinjoin coordinator</li>
+                    <li>Call the experimental password manager "Password manager"</li>
+                    <li>Default to the dark theme</li>
+                    <li>Keep the local development profile separate</li>
+                    <li>Remove user feedback forms</li>
+                    <li>Document the fork for contributors and agents</li>
+                </ol>
+                <p class="prose">
+                    Read them on
+                    <a href="https://github.com/mroz22/trezor-suite-dark/commits/main">GitHub</a>, or
+                    see the full diff against Trezor Suite in
+                    <a href="https://github.com/mroz22/trezor-suite-dark/compare/develop...main"
+                        >one comparison</a
+                    >. The reasoning behind each change is in
+                    <a href="https://github.com/mroz22/trezor-suite-dark/blob/main/SUITE_DARK.md"
+                        ><code>SUITE_DARK.md</code></a
+                    >.
+                </p>
+            </section>
+
+            <section class="section" id="build" aria-labelledby="build-heading">
+                <h2 id="build-heading">Build it</h2>
+                <p class="prose">
+                    You need git, <a href="https://git-lfs.com/">Git LFS</a>,
+                    <a href="https://github.com/nvm-sh/nvm">nvm</a> and Yarn. The steps follow
+                    Trezor Suite's own desktop build. Use macOS or Linux for the build host.
+                </p>
+                <pre><code>git clone https://github.com/mroz22/trezor-suite-dark.git
+cd trezor-suite-dark
+git submodule update --init --recursive
+git lfs install
+git lfs pull
+nvm install
+yarn
+yarn build:essential
+yarn workspace @suite-app/desktop-app build:ui
+yarn workspace @suite-app/desktop-app build:app
+
+# then one of
+yarn workspace @suite-app/desktop-app build:app:electron --publish never --mac --arm64
+yarn workspace @suite-app/desktop-app build:app:electron --publish never --linux --x64
+yarn workspace @suite-app/desktop-app build:app:electron --publish never --win --x64</code></pre>
+                <p class="note">
+                    The installer ends up in <code>suite-app/desktop-app/build-electron/</code>. Until
+                    releases exist, these builds are unsigned, call themselves Suite Dark Dev, keep
+                    their data in a <code>suitedark-desktop-dev</code> folder and do not update
+                    themselves.
+                </p>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <p class="disclaimer">
+                Suite Dark is maintained by
+                <a href="https://github.com/mroz22">mroz22</a>. It is not a SatoshiLabs product
+                and Trezor Support does not cover it. Trezor and Trezor Suite are trademarks of
+                their owner. The software comes as is, with no warranty.
+            </p>
+            <p class="links">
+                <a href="https://github.com/mroz22/trezor-suite-dark">Source</a>
+                <a href="https://github.com/mroz22/trezor-suite-dark/compare/develop...main"
+                    >Changes</a
+                >
+                <a href="https://github.com/mroz22/trezor-suite-dark/blob/main/SUITE_DARK.md"
+                    >SUITE_DARK.md</a
+                >
+                <a href="https://github.com/trezor/trezor-suite">Trezor Suite ↗</a>
+            </p>
+            <p class="disclaimer">This page loads nothing from other sites.</p>
+        </footer>
+    </body>
+</html>
