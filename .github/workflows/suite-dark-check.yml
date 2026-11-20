@@ -1,0 +1,237 @@
+name: "[Suite Dark] Checks"
+
+# The fork's only workflow on main: every upstream workflow is removed in the commit
+# `ci(suite-dark): remove the upstream workflows`. It checks the packages the fork changes, the way
+# SUITE_DARK.md (Checks) describes for local runs: both ESLint rule sets, Stylelint, type-check and
+# unit tests of every package with a changed file, plus @trezor/suite and @suite-app/app, where a
+# changed default breaks tests far from the edited file.
+# Actions are pinned to the same SHAs upstream uses; the scope job fails when upstream moves on.
+
+on:
+  push:
+    # develop mirrors upstream and gh-pages holds the website; neither carries fork changes.
+    branches-ignore:
+      - develop
+      - gh-pages
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Suite Dark: CI uses neither upstream's Nx Cloud workspace nor SafeDep's usage telemetry.
+  NX_NO_CLOUD: "true"
+  PMG_DISABLE_TELEMETRY: "true"
+
+jobs:
+  scope:
+    name: Workflows and changed packages
+    # A deleted branch also sends a push event; there is nothing to check out.
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.projects.outputs.base }}
+      projects: ${{ steps.projects.outputs.projects }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pinned as upstream pins it
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Upstream develop
+        # The fork point comes from upstream, not from the origin/develop mirror, which can lag behind
+        # a branch rebased onto a newer upstream.
+        run: git fetch --no-tags --quiet https://github.com/trezor/trezor-suite.git develop
+      - name: Only Suite Dark workflows, pinned like upstream
+        run: |
+          # Upstream adds workflows without a rebase conflict. Delete new ones in the commit that
+          # removes the upstream workflows (SUITE_DARK.md, Sync with upstream).
+          extra=$(find .github/workflows -maxdepth 1 -type f ! -name 'suite-dark-*' | sort)
+          if [ -n "$extra" ]; then
+            echo "::error::Upstream workflows are back. Delete them in 'ci(suite-dark): remove the upstream workflows':"
+            echo "$extra"
+            exit 1
+          fi
+          # Without upstream's Dependabot the fork's pins would go stale unnoticed.
+          for ref in $(grep -ho 'uses: [a-z][^ ]*@[0-9a-f]\{40\}' .github/workflows/suite-dark-*.yml | sed 's/uses: //' | sort -u); do
+            repo=$(echo "${ref%@*}" | cut -d/ -f1-2)
+            sha=${ref#*@}
+            if ! git grep -qE "uses: ${repo}(/[^@ ]*)?@${sha}" FETCH_HEAD -- .github; then
+              echo "::error::$ref is no longer pinned anywhere upstream; take upstream's current pin."
+              exit 1
+            fi
+          done
+      - name: Packages the fork changes
+        id: projects
+        run: |
+          base=$(git merge-base FETCH_HEAD HEAD)
+          projects=$(git diff --name-only "$base" HEAD | BASE="$base" node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const { execFileSync } = require("child_process");
+            const names = new Set(["@trezor/suite", "@suite-app/app"]);
+            const global = [];
+            // Root files every package depends on; CI still checks only the selected packages.
+            const sharedRoot = /^(yarn\.lock|\.yarnrc\.yml|nx\.json|tsconfig[^/]*\.json|eslint\.config\.mjs|jest\.config[^/]*\.js|JestCustomEnv\.js|babel\.config\.js|patches\/.*)$/;
+            const files = fs.readFileSync(0, "utf8").split("\n").filter(Boolean);
+            for (const file of files) {
+              let owner = null;
+              for (let dir = path.dirname(file); dir !== "."; dir = path.dirname(dir)) {
+                const manifest = path.join(dir, "package.json");
+                if (fs.existsSync(manifest)) {
+                  owner = JSON.parse(fs.readFileSync(manifest, "utf8")).name;
+                  break;
+                }
+              }
+              if (owner) names.add(owner);
+              else if (sharedRoot.test(file)) global.push(file);
+              else if (file === "package.json") {
+                // The fork changes the root description; any other root manifest change is global.
+                const read = rev => JSON.parse(execFileSync("git", ["show", `${rev}:package.json`], { encoding: "utf8" }));
+                const [before, after] = [read(process.env.BASE), read("HEAD")];
+                delete before.description;
+                delete after.description;
+                if (JSON.stringify(before) !== JSON.stringify(after)) global.push(file);
+              }
+            }
+            for (const file of global) {
+              console.error(`::warning file=${file}::Shared root file changed; CI checks only the selected packages, run affected checks locally.`);
+            }
+            console.log([...names].sort().join(","));
+          ')
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+          {
+            echo "Base: \`$base\` (merge base with upstream develop)"
+            echo
+            echo "Packages: $projects"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  lockfile:
+    name: Lockfile (hardened install)
+    needs: scope
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pinned as upstream pins it
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # pinned as upstream pins it
+        with:
+          node-version-file: ".nvmrc"
+      - name: Install with hardened mode
+        # Yarn turns hardened mode on by itself only for pull requests; the fork's CI runs on push.
+        env:
+          YARN_ENABLE_HARDENED_MODE: "1"
+        run: yarn --immutable --mode=skip-build
+
+  lint:
+    name: ESLint (all rules) and Stylelint
+    needs: scope
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pinned as upstream pins it
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/minimal-yarn-install
+        with:
+          disable-hardened-mode: "true"
+      - name: Yarn cache directory
+        id: yarn-cache
+        run: echo "dir=$(yarn config get cacheFolder)" >> "$GITHUB_OUTPUT"
+      - name: Save the Yarn cache from main
+        # restore-yarn-cache looks up this key; branches can restore caches saved on main.
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # pinned as upstream pins it
+        with:
+          path: ${{ steps.yarn-cache.outputs.dir }}
+          key: yarn-cache-develop-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+      - name: ESLint
+        env:
+          ESLINT_RULE_SET: all
+          PROJECTS: ${{ needs.scope.outputs.projects }}
+        run: yarn nx run-many --target=lint:js --projects="$PROJECTS" --output-style=stream
+      - name: Stylelint
+        env:
+          PROJECTS: ${{ needs.scope.outputs.projects }}
+        run: |
+          yarn test:stylelint-rules
+          yarn nx run-many --target=lint:styles --projects="$PROJECTS" --output-style=stream
+
+  type-check:
+    name: Type check
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pinned as upstream pins it
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/minimal-yarn-install
+        with:
+          disable-hardened-mode: "true"
+      - name: Nx cache
+        # Nx keys entries by input hash, so an older cache is safe to restore. Branches restore
+        # their own entries or main's, never another branch's.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # pinned as upstream pins it
+        with:
+          path: .nx/cache
+          key: nx-type-check-${{ runner.os }}-${{ github.sha }}
+          restore-keys: nx-type-check-${{ runner.os }}-
+      - name: Type check
+        env:
+          PROJECTS: ${{ needs.scope.outputs.projects }}
+        run: yarn nx run-many --target=type-check --projects="$PROJECTS" --output-style=stream
+
+  unit-tests:
+    name: Unit tests
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pinned as upstream pins it
+        with:
+          persist-credentials: false
+      - name: Git LFS objects the selected tests read
+        # Only @trezor/network-cardano's tests read LFS files; skip the rest of LFS (bandwidth).
+        if: contains(needs.scope.outputs.projects, '@trezor/network-cardano')
+        run: git lfs pull --include='networks/cardano/network-cardano/generated/csl-asmjs/*'
+      - uses: ./.github/actions/minimal-yarn-install
+        with:
+          disable-hardened-mode: "true"
+      - name: Guide content for tests that import the Guide
+        run: yarn workspace @suite/app-assets build:lib
+      - name: Unit tests
+        env:
+          PROJECTS: ${{ needs.scope.outputs.projects }}
+        run: yarn nx run-many --target=test:unit --projects="$PROJECTS" --output-style=stream -- --silent
+
+  other:
+    name: Formatting, translations and React Compiler
+    needs: scope
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pinned as upstream pins it
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/minimal-yarn-install
+        with:
+          disable-hardened-mode: "true"
+      - name: Formatting of the fork's files
+        env:
+          BASE: ${{ needs.scope.outputs.base }}
+        # The base is an ancestor of HEAD, so the full checkout already has it.
+        run: yarn nx format:check --base="$BASE" --head=HEAD
+      - name: Message-system config
+        run: yarn workspace @suite-common/message-system validate-config
+      - name: Translation duplicates
+        run: yarn workspace @suite/intl translations:list-duplicates
+      - name: Unused translations
+        run: yarn workspace @suite/intl translations:list-unused
+      - name: React Compiler frozen form reads
+        run: yarn react-compiler:check
