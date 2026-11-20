@@ -32,8 +32,10 @@ import {
 } from './coinjoinUtils';
 import {
     CLIENT_STATUS_FALLBACK,
+    type CoinjoinSymbol,
     DEFAULT_TARGET_ANONYMITY,
     FEE_RATE_MEDIAN_FALLBACK,
+    MAX_COORDINATOR_FEE_RATE,
     MIN_ANONYMITY_GAINED_PER_ROUND,
     SKIP_ROUNDS_BY_DEFAULT,
     UNECONOMICAL_COINJOIN_THRESHOLD,
@@ -109,6 +111,14 @@ export const selectTargetAnonymityByAccountKey = (
     return coinjoinAccount.setup?.targetAnonymity ?? DEFAULT_TARGET_ANONYMITY;
 };
 
+// The same merge initCoinjoinServiceThunk hands to the client.
+const selectCoinjoinNetworkConfig = (state: CoinjoinRootState, symbol: CoinjoinSymbol) => {
+    const debug = selectCoinjoinDebug(state);
+    const config = getCoinjoinConfig(symbol, debug?.coinjoinServerEnvironment?.[symbol]);
+
+    return { ...config, ...debug?.coinjoinConfigOverride?.[symbol] };
+};
+
 // Mixing needs a coordinator. The public ones shut down, so btc and test have one only when it is
 // passed at startup through `--state.wallet.coinjoin.debug.coinjoinConfigOverride.<symbol>`, while
 // regtest keeps its local one. The message-system flag can still turn coinjoin off remotely.
@@ -119,11 +129,8 @@ export const selectIsMixingEnabled = (
     if (!isCoinjoinSupportedSymbol(symbol) || selectIsFeatureDisabled(state, Feature.coinjoin)) {
         return false;
     }
-    const debug = selectCoinjoinDebug(state);
-    const config = getCoinjoinConfig(symbol, debug?.coinjoinServerEnvironment?.[symbol]);
 
-    // the same merge initCoinjoinServiceThunk hands to the client
-    return !!{ ...config, ...debug?.coinjoinConfigOverride?.[symbol] }.coordinatorUrl;
+    return !!selectCoinjoinNetworkConfig(state, symbol).coordinatorUrl;
 };
 
 // Holding low-anonymity coins back only protects something where coins went through a coinjoin
@@ -286,6 +293,27 @@ export const selectDefaultMaxMiningFeeByAccountKey = (
     const maxMiningFeeConfig = selectMaxMiningFeeConfig(state); // value defined in message system config has priority over default value (but not over custom value set by user)
 
     return maxMiningFeeConfig ?? getMaxFeePerVbyte(feeRateMedian, maxMiningFeeModifier);
+};
+
+// Coordinator fee rate a new session authorizes on the device: the rate of the coordinator's last
+// round, capped by the network config or MAX_COORDINATOR_FEE_RATE.
+export const selectMaxCoordinatorFeeRateByAccountKey = (
+    state: CoinjoinRootState,
+    accountKey: AccountKey,
+) => {
+    const coinjoinAccount = selectCoinjoinAccountByKey(state, accountKey);
+    const coinjoinClient = selectCoinjoinClient(state, accountKey);
+
+    if (!coinjoinAccount || !coinjoinClient || !isCoinjoinSupportedSymbol(coinjoinAccount.symbol)) {
+        return;
+    }
+
+    const config = selectCoinjoinNetworkConfig(state, coinjoinAccount.symbol);
+
+    return Math.min(
+        coinjoinClient.coordinationFeeRate.rate,
+        config.maxCoordinatorFeeRate ?? MAX_COORDINATOR_FEE_RATE,
+    );
 };
 
 export const selectMinAllowedInputWithFee = (state: CoinjoinRootState, accountKey: AccountKey) => {
@@ -503,14 +531,15 @@ export const selectStartCoinjoinSessionArguments = (
 ) => {
     const selectedAccount = selectSelectedAccount(state);
     const coinjoinAccount = selectCoinjoinAccountByKey(state, accountKey);
-    const coinjoinClient = selectCoinjoinClient(state, accountKey);
+    const maxCoordinatorFeeRate = selectMaxCoordinatorFeeRateByAccountKey(state, accountKey);
     const roundsNeeded = selectRoundsNeededByAccountKey(state, accountKey);
     const roundsFailRateBuffer = selectRoundsFailRateBuffer(state);
     const defaultMaxMiningFee = selectDefaultMaxMiningFeeByAccountKey(state, accountKey);
     const targetAnonymity =
         selectTargetAnonymityByAccountKey(state, accountKey) ?? DEFAULT_TARGET_ANONYMITY;
 
-    if (!selectedAccount || !coinjoinAccount || !coinjoinClient) return;
+    // Without a coinjoin client there is no fee rate to authorize.
+    if (!selectedAccount || !coinjoinAccount || maxCoordinatorFeeRate === undefined) return;
 
     const maxFeePerKvbyte = (coinjoinAccount.setup?.maxFeePerVbyte ?? defaultMaxMiningFee) * 1000; // Transform to kvB.
     const maxRounds = getMaxRounds(roundsNeeded, roundsFailRateBuffer);
@@ -521,7 +550,7 @@ export const selectStartCoinjoinSessionArguments = (
     return [
         selectedAccount,
         {
-            maxCoordinatorFeeRate: Math.min(coinjoinClient.coordinationFeeRate.rate, 0.01), // 1% max cap by suite
+            maxCoordinatorFeeRate,
             maxFeePerKvbyte,
             maxRounds,
             skipRounds,
