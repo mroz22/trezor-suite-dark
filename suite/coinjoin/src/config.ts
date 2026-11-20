@@ -12,7 +12,11 @@ import type { PartialRecord } from '@trezor/type-utils';
 export type CoinjoinSymbol = NetworkSymbol & ('btc' | 'test' | 'regtest');
 export type CoinjoinServerEnvironment = 'public' | 'localhost';
 export type CoinjoinNetworksConfig = CoinjoinBackendSettings &
-    CoinjoinClientSettings & { blockbookUrls: string[] };
+    CoinjoinClientSettings & {
+        blockbookUrls: string[];
+        // Replaces MAX_COORDINATOR_FEE_RATE for the coordinator of the network.
+        maxCoordinatorFeeRate?: number;
+    };
 
 type ServerEnvironment = PartialRecord<CoinjoinServerEnvironment, CoinjoinNetworksConfig>;
 
@@ -101,6 +105,10 @@ export const ESTIMATED_MIN_ROUNDS_NEEDED = 4;
 export const ESTIMATED_HOURS_PER_ROUND = 1;
 export const UNECONOMICAL_COINJOIN_THRESHOLD = 1_000_000;
 export const COORDINATOR_FEE_RATE_MULTIPLIER = 10 ** 8; // coordinator fee rate from status format (0.003) - firmware format (300 000 = 0.003 * 10 ** 8)
+// Highest coordinator fee rate (0.1 %) a coinjoin session authorizes on the device. The device does
+// not show the authorized rate, so the rate a coordinator advertises in its status must not decide
+// it alone. Rounds with a higher rate are skipped.
+export const MAX_COORDINATOR_FEE_RATE = 0.001;
 export const DEFAULT_TARGET_ANONYMITY = 5;
 export const SKIP_ROUNDS_BY_DEFAULT = false;
 export const SKIP_ROUNDS_VALUE_WHEN_ENABLED = [4, 5] as [number, number];
