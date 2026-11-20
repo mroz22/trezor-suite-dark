@@ -32,6 +32,13 @@ For development and e2e purposes you can use local version of coinjoin backend (
 
 1. Run suite, go to settings and enable `Debug mode` (click 5 times on the "Settings" header)
 
+    Suite authorizes a coordinator fee of at most 0.1% and skips rounds with a higher fee. The skip shows only as `Fees to high` in the info log. If the backend coordinator charges more (the WalletWasabi default is 0.3%), start the desktop app as in [Testing against a public coordinator](#testing-against-a-public-coordinator) with a higher cap for regtest:
+
+    ```bash
+    yarn workspace @suite-app/desktop-app dev:run \
+        '--state.wallet.coinjoin.debug.coinjoinConfigOverride.regtest.maxCoordinatorFeeRate=0.003'
+    ```
+
 1. go to Settings > Crypto tab and enable `Bitcoin Regtest` and set custom backend to `http://localhost:19121/` (default)
 
     > Optionally disable other coins
