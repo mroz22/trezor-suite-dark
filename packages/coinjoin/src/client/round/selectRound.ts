@@ -367,6 +367,21 @@ const selectInputsForBlameRound = ({
         });
 
         if (inputs.length > 0) {
+            // Inputs allowed in the blame round, see verifyRoundInputs. CoinjoinPrison keeps them
+            // only in memory, so after a restart the round is refused, as WalletWasabi does not
+            // continue a blame chain after a restart either. The failed round may leave the status
+            // before this one ends, so the round keeps them.
+            const blameOfOutpoints = round.prison.getBlameOfOutpoints(round.blameOf);
+            if (!blameOfOutpoints) {
+                logger.info(
+                    `Skipping blame round ~~${round.id}~~. Inputs of the failed round are unknown`,
+                );
+                releaseRefusedBlameRound({ blameOf: round.blameOf, prison: round.prison, logger });
+
+                return false;
+            }
+
+            round.blameOfOutpoints = blameOfOutpoints;
             round.inputs.push(...inputs);
             logger.info(`Created blame round ~~${round.id}~~ with ${round.inputs.length} inputs`);
 

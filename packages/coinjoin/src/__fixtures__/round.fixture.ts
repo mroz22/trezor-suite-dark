@@ -2,6 +2,7 @@ import { CoinjoinPrison } from '../client/CoinjoinPrison';
 import { CoinjoinRound } from '../client/CoinjoinRound';
 import { ROUND_SELECTION_REGISTRATION_OFFSET } from '../constants';
 import type { AllowedScriptTypes, CoinjoinInputAddedEvent, Round } from '../types/coordinator';
+import type { CoinjoinTransactionData } from '../types/round';
 
 export const ROUND_CREATION_EVENT = {
     Type: 'RoundCreated' as const,
@@ -64,6 +65,27 @@ export const createInputAddedEvent = (Outpoint: string): CoinjoinInputAddedEvent
         },
     },
     OwnershipProof: 'not-relevant',
+});
+
+// Transaction to sign with inputs of the given outpoints and no outputs. Other input data are
+// not relevant.
+export const createTransactionData = (outpoints: string[]): CoinjoinTransactionData => ({
+    inputs: outpoints.map(outpoint => ({
+        outpoint,
+        amount: 1,
+        hash: '',
+        index: 0,
+        commitmentData: '',
+        address: '',
+        scriptPubKey: '',
+        ownershipProof: '',
+    })),
+    outputs: [],
+    coinjoinRequest: {
+        fee_rate: 0,
+        no_fee_threshold: 0,
+        min_registrable_amount: 0,
+    },
 });
 
 export const FEE_RATE_MEDIANS = [

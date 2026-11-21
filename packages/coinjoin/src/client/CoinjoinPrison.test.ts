@@ -1,4 +1,5 @@
 import { CoinjoinPrison } from './CoinjoinPrison';
+import type { CoinjoinPrisonEvents } from '../types/prison';
 
 describe('CoinjoinPrison', () => {
     it('release inmate when Round is no longer present in Status', () =>
@@ -22,4 +23,51 @@ describe('CoinjoinPrison', () => {
 
             expect(prison.inmates.map(({ id }) => id)).toEqual(['00AB', '01AA']);
         }));
+
+    describe('inputs of rounds awaiting their blame round', () => {
+        const ownInput = { accountKey: 'account-A', outpoint: 'AA' };
+        const signedOutpoints = ['AA', 'BB'];
+
+        it('are kept apart from the inmates', async () => {
+            const prison = new CoinjoinPrison();
+            const changeEvent = new Promise<CoinjoinPrisonEvents['change']>(resolve =>
+                prison.once('change', resolve),
+            );
+
+            prison.detainForBlameRound([ownInput], '01', signedOutpoints);
+
+            expect(prison.getBlameOfOutpoints('01')).toEqual(signedOutpoints);
+            expect(prison.getBlameOfOutpoints('02')).toBeUndefined();
+            // Neither emitted nor persisted with the inmates.
+            const inmates = [
+                expect.objectContaining({ id: 'AA', errorCode: 'blameOf', roundId: '01' }),
+            ];
+            expect(prison.inmates).toEqual(inmates);
+            expect(await changeEvent).toEqual({ prison: inmates });
+        });
+
+        it('are released with the inmates of the round', () => {
+            const prison = new CoinjoinPrison();
+            prison.detainForBlameRound([ownInput], '01', signedOutpoints);
+
+            prison.releaseBlameOfInmates('01');
+
+            expect(prison.getBlameOfOutpoints('01')).toBeUndefined();
+            expect(prison.inmates).toEqual([]);
+        });
+
+        it('are released when the round is no longer present in Status', () => {
+            const prison = new CoinjoinPrison();
+            prison.detainForBlameRound([ownInput], '01', signedOutpoints);
+            prison.detainForBlameRound([], '02', ['CC']);
+
+            prison.release(['01']);
+            expect(prison.getBlameOfOutpoints('01')).toEqual(signedOutpoints);
+            expect(prison.getBlameOfOutpoints('02')).toBeUndefined();
+
+            prison.release([]);
+            expect(prison.getBlameOfOutpoints('01')).toBeUndefined();
+            expect(prison.inmates).toEqual([]);
+        });
+    });
 });

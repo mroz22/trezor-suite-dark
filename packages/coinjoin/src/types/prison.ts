@@ -40,8 +40,9 @@ export interface CoinjoinPrisonShape {
     inmates: CoinjoinPrisonInmate[];
     detain(inmate: DetainObject, options?: DetainOptions): void;
     isDetained(inmate: string | DetainObject): CoinjoinPrisonInmate | undefined;
-    detainForBlameRound(inmates: DetainObject[], roundId: string): void;
+    detainForBlameRound(inmates: DetainObject[], roundId: string, roundOutpoints: string[]): void;
     getBlameOfInmates(): CoinjoinPrisonInmate[];
+    getBlameOfOutpoints(roundId: string): readonly string[] | undefined;
     releaseBlameOfInmates(roundId: string): void;
     releaseRegisteredInmates(roundId: string): void;
     release(rounds: string[]): void;
