@@ -91,7 +91,7 @@ export class Status extends TypedEmitter<StatusEvents> {
                             prevRound.Phase < RoundPhase.Ended &&
                             !next.some(nextRound => prevRound.Id === nextRound.Id),
                     )
-                    .map(r => ({ ...r, phase: RoundPhase.Ended })),
+                    .map(r => ({ ...r, Phase: RoundPhase.Ended })),
             );
     }
 
