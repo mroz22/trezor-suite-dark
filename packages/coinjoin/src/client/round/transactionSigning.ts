@@ -40,32 +40,45 @@ const getTransactionData = (
         throw new Error(`No registered outputs for round ${round.id}`);
     }
 
-    if (registeredInputs.length < myInputsInRound.length) {
-        throw new Error(`Inconsistent data. Unexpected sum of registered inputs.`);
-    }
-
-    if (registeredOutputs.length < myOutputsInRound.length) {
-        throw new Error(`Inconsistent data. Unexpected sum of registered outputs.`);
-    }
-
     // The status may lie differently in each phase, check the inputs again before signing.
     verifyRoundInputs(round, options);
+
+    // As WalletWasabi CoinJoinClient.SanityCheck: every own output has to be in the transaction
+    // with at least the amount expected when it was registered.
+    const underpaidOutputs = myOutputsInRound.filter(
+        ({ scriptPubKey, amount }) =>
+            !registeredOutputs.some(
+                ({ Output }) => Output.ScriptPubKey === scriptPubKey && Output.Value >= amount,
+            ),
+    );
+
+    if (underpaidOutputs.length > 0) {
+        throw new coordinator.CoordinatorMisbehaviorError(
+            `Inconsistent data. ${underpaidOutputs.length} own outputs missing or with a lower amount.`,
+        );
+    }
 
     const inputs = registeredInputs
         .sort((a, b) => sortInputs(a.Coin, b.Coin))
         .map(({ Coin, OwnershipProof }) => {
             const { index, hash } = readOutpoint(Coin.Outpoint);
             const internal = myInputsInRound.find(a => compareOutpoint(a.outpoint, Coin.Outpoint));
-            const address = getAddressFromScriptPubKey(Coin.TxOut.ScriptPubKey, options.network);
+            // Own inputs match the coordinator data (see verifyRoundInputs), still sign the data of
+            // this client.
+            const { address, amount, scriptPubKey } = internal ?? {
+                address: getAddressFromScriptPubKey(Coin.TxOut.ScriptPubKey, options.network),
+                amount: Coin.TxOut.Value,
+                scriptPubKey: prefixScriptPubKey(Coin.TxOut.ScriptPubKey),
+            };
 
             return {
                 path: internal?.path,
                 outpoint: internal?.outpoint || Coin.Outpoint, // NOTE: internal outpoints are in lowercase, coordinators in uppercase
                 hash,
                 index,
-                amount: Coin.TxOut.Value,
+                amount,
                 address,
-                scriptPubKey: prefixScriptPubKey(Coin.TxOut.ScriptPubKey),
+                scriptPubKey,
                 ownershipProof: OwnershipProof,
                 commitmentData: round.commitmentData,
             };

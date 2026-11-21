@@ -26,6 +26,7 @@ jest.mock('./outputDecomposition', () => ({
 
 const OWN_OUTPOINT = 'a00000000000000000000000000000000000000000000000000000000000000001000000';
 const OTHER_OUTPOINT = 'B00000000000000000000000000000000000000000000000000000000000000002000000';
+const OTHER_OUTPOINT_2 = 'C00000000000000000000000000000000000000000000000000000000000000003000000';
 
 // CoinjoinState with the RoundCreated event and the given registered inputs.
 const createCoinjoinState = (registeredOutpoints: string[]) => ({
@@ -165,4 +166,133 @@ describe('outputRegistration', () => {
             );
         });
     });
+
+    it('refuses a round with a different amount of an own input before revealing outputs', async () => {
+        const requestedUrls: string[] = [];
+        server?.addListener('test-request', ({ url, resolve }) => {
+            requestedUrls.push(url);
+            resolve();
+        });
+
+        // The coordinator announces the own input with amount 1.
+        const ownInput = createInput('account-A', OWN_OUTPOINT, {
+            amount: 2,
+            confirmedAmountCredentials: [{ Value: 2 }],
+        });
+        const response = await outputRegistration(
+            createCoinjoinRound([ownInput], {
+                ...server?.requestOptions,
+                round: {
+                    phase: 2,
+                    coinjoinState: createCoinjoinState([OWN_OUTPOINT, OTHER_OUTPOINT]),
+                },
+            }),
+            [],
+            server?.requestOptions,
+        );
+
+        expect(outputDecomposition).not.toHaveBeenCalled();
+        expect(requestedUrls).toEqual([]); // no /credential-issuance or /output-registration
+        response.inputs.forEach(input => {
+            expect(input.error?.message).toMatch(
+                /1 own inputs missing or registered with a different amount or script/,
+            );
+        });
+    });
+
+    it('does not take a missing own input without confirmed credentials for a lie', async () => {
+        const requestedUrls: string[] = [];
+        server?.addListener('test-request', ({ url, resolve }) => {
+            requestedUrls.push(url);
+            resolve();
+        });
+        // An earlier test replaces the implementation.
+        (outputDecomposition as jest.Mock).mockImplementation(
+            jest.requireActual('./outputDecomposition').outputDecomposition,
+        );
+
+        // The coordinator removed the own input, which did not confirm its connection in time.
+        const response = await outputRegistration(
+            createCoinjoinRound([createInput('account-A', OWN_OUTPOINT)], {
+                ...server?.requestOptions,
+                round: {
+                    phase: 2,
+                    coinjoinState: createCoinjoinState([OTHER_OUTPOINT, OTHER_OUTPOINT_2]),
+                },
+            }),
+            [],
+            server?.requestOptions,
+        );
+
+        expect(requestedUrls).toEqual([]); // no /credential-issuance or /output-registration
+        response.inputs.forEach(input => {
+            expect(input.error?.message).toMatch(/Missing confirmed credentials/);
+        });
+    });
+
+    // A Taproot output has 43 vB. At 1234 sat/kvB it costs 53.062 sat, the coordinator charges
+    // 53 sat and the client expects 54 sat at most. Below 1 sat the client expects the whole rate
+    // per kvB, at least 1 sat.
+    it.each([
+        [1234, 54],
+        [20, 20],
+        [0, 1],
+    ])(
+        'expects an output at %i sat/kvB to get its credentials minus %i sat',
+        async (MiningFeeRate, outputFee) => {
+            (outputDecomposition as jest.Mock).mockImplementationOnce(() =>
+                Promise.resolve([
+                    {
+                        accountKey: 'account-A',
+                        outputs: [
+                            {
+                                accountKey: 'account-A',
+                                amount: 100000,
+                                amountCredentials: [{ Value: 100000 }, { Value: 0 }],
+                                vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
+                            },
+                        ],
+                    },
+                ]),
+            );
+            const changeAddress = {
+                path: "m/10025'/1'/0'/1'/1/0",
+                address: 'tb1ppll2u0aaprp92gfkntamd476emye7weykcgnctlyj7lduprjx7ys9jn7w3',
+                scriptPubKey: '1 0ffeae3fbd08c25521369afbb6d7dacec99f3b24b6113c2fe497bede04723789',
+            };
+
+            const response = await outputRegistration(
+                createCoinjoinRound(
+                    [
+                        createInput('account-A', OWN_OUTPOINT, {
+                            registrationData: { AliceId: 'A' },
+                        }),
+                    ],
+                    {
+                        ...server?.requestOptions,
+                        round: {
+                            phase: 2,
+                            coinjoinState: createCoinjoinState([OWN_OUTPOINT, OTHER_OUTPOINT]),
+                        },
+                        roundParameters: { MiningFeeRate },
+                    },
+                ),
+                [
+                    {
+                        accountKey: 'account-A',
+                        scriptType: 'Taproot',
+                        changeAddresses: [changeAddress],
+                    } as any, // partial Account
+                ],
+                server?.requestOptions,
+            );
+
+            response.inputs.forEach(input => {
+                expect(input.error).toBeUndefined();
+            });
+            expect(response.addresses).toEqual([
+                { ...changeAddress, accountKey: 'account-A', amount: 100000 - outputFee },
+            ]);
+        },
+    );
 });

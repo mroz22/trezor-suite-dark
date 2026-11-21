@@ -70,11 +70,13 @@ describe(`CoinjoinRound`, () => {
     });
 
     it('catch errored Round', async () => {
-        // create CoinjoinRound in phase 2 (OutputRegistration) with inputs of other participants,
-        // so it passes verifyRoundInputs
+        const ownOutpoint =
+            'a10000000000000000000000000000000000000000000000000000000000000001000000';
+        // create CoinjoinRound in phase 2 (OutputRegistration) with the own input and inputs of
+        // other participants, so it passes verifyRoundInputs
         const round = createCoinjoinRound(
             [
-                createInput('account-A', 'A1', {
+                createInput('account-A', ownOutpoint, {
                     ownershipProof: '01A1',
                     registrationData: {
                         AliceId: '01A1-01a1',
@@ -82,7 +84,7 @@ describe(`CoinjoinRound`, () => {
                     realAmountCredentials: {},
                     realVsizeCredentials: {},
                     confirmationData: {},
-                    confirmedAmountCredentials: {},
+                    confirmedAmountCredentials: [{}], // getOutputAmounts reads the first one
                     confirmedVsizeCredentials: {},
                 }),
             ],
@@ -95,6 +97,7 @@ describe(`CoinjoinRound`, () => {
                         Type: '',
                         Events: [
                             ROUND_CREATION_EVENT,
+                            createInputAddedEvent(ownOutpoint.toUpperCase()),
                             createInputAddedEvent(
                                 'B00000000000000000000000000000000000000000000000000000000000000002000000',
                             ),
