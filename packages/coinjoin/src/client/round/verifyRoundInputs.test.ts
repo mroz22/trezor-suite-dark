@@ -2,7 +2,7 @@ import { loggerMock as logger } from '@trezor/logger/mocks';
 
 import { verifyRoundInputs } from './verifyRoundInputs';
 import { createInput } from '../../__fixtures__/input.fixture';
-import { createInputAddedEvent } from '../../__fixtures__/round.fixture';
+import { DEFAULT_ROUND, createInputAddedEvent } from '../../__fixtures__/round.fixture';
 import { getCommitmentData } from '../../utils/roundUtils';
 import { CoordinatorMisbehaviorError } from '../coordinator';
 
@@ -47,6 +47,7 @@ const createRound = (registeredOutpoints: string[]) => ({
         }),
     },
     commitmentData: COMMITMENT_DATA,
+    blameOf: DEFAULT_ROUND.BlameOf,
 });
 
 const getThrownError = (verify: () => void) => {
@@ -236,5 +237,73 @@ describe('verifyRoundInputs', () => {
         expect(() =>
             verifyRoundInputs({ ...createRound([]), inputs: [] }, { minInputCount: 0, logger }),
         ).toThrow('No inputs of other participants in the round.');
+    });
+
+    describe('blame round', () => {
+        const ANOTHER_OUTPOINT =
+            'D00000000000000000000000000000000000000000000000000000000000000004000000';
+
+        const createBlameRound = (registeredOutpoints: string[], blameOfOutpoints?: string[]) => ({
+            ...createRound(registeredOutpoints),
+            blameOf: '1'.repeat(64),
+            blameOfOutpoints,
+        });
+
+        it('accepts inputs of the failed round in another letter case', () => {
+            // As signed in the failed round: own outpoints lowercase, the others uppercase. An
+            // honest coordinator may leave some of them out.
+            const round = createBlameRound(
+                [
+                    OWN_OUTPOINT.toUpperCase(),
+                    OWN_OUTPOINT_2.toUpperCase(),
+                    OTHER_OUTPOINT.toLowerCase(),
+                ],
+                [OWN_OUTPOINT, OWN_OUTPOINT_2, OTHER_OUTPOINT, ANOTHER_OUTPOINT],
+            );
+
+            expect(verifyRoundInputs(round, { minInputCount: 2, logger })).toEqual([
+                `${'0'.repeat(62)}a0:1`,
+                `${'0'.repeat(62)}b0:2`,
+                `${'0'.repeat(62)}c0:3`,
+            ]);
+        });
+
+        it.each([
+            ['missing', [OWN_OUTPOINT, OWN_OUTPOINT_2]],
+            ['malformed', [OWN_OUTPOINT, `${OTHER_OUTPOINT}ZZ`, OWN_OUTPOINT_2]],
+        ])(
+            'refuses inputs which were not in the failed round (%s there)',
+            (_, blameOfOutpoints) => {
+                // The other inputs fail before their ownership proofs are verified.
+                const round = createBlameRound(
+                    [OWN_OUTPOINT, OWN_OUTPOINT_2, OTHER_OUTPOINT, ANOTHER_OUTPOINT],
+                    blameOfOutpoints,
+                );
+                const error = getThrownError(() =>
+                    verifyRoundInputs(round, { minInputCount: 2, logger }),
+                );
+
+                expect(error).toBeInstanceOf(CoordinatorMisbehaviorError);
+                expect(error).toHaveProperty(
+                    'message',
+                    'Inconsistent data. 2 inputs of the blame round were not in the failed round.',
+                );
+                expect(logger.warn).toHaveBeenCalledTimes(1);
+                expect(logger.warn).toHaveBeenCalledWith(
+                    `Input ~~${OTHER_OUTPOINT}~~ and 1 other inputs of the blame round were not in the failed round`,
+                );
+            },
+        );
+
+        it('refuses a blame round without known inputs of the failed round as a non-misbehavior', () => {
+            const round = createBlameRound([OWN_OUTPOINT, OWN_OUTPOINT_2, OTHER_OUTPOINT]);
+            const error = getThrownError(() =>
+                verifyRoundInputs(round, { minInputCount: 2, logger }),
+            );
+
+            expect(error).toBeInstanceOf(Error);
+            expect(error).not.toBeInstanceOf(CoordinatorMisbehaviorError);
+            expect(error).toHaveProperty('message', 'Inputs of the failed round are unknown.');
+        });
     });
 });

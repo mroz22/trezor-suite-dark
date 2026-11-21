@@ -60,7 +60,10 @@ export const ended = (round: CoinjoinRoundShape, { logger, network }: CoinjoinRo
     } else if (endRoundState === EndRoundState.NotAllAlicesSign) {
         logger.info('Awaiting blame round');
 
-        prison.detainForBlameRound([...inputs, ...addresses], id);
+        // The blame round may contain only inputs of the transaction signed here, see
+        // verifyRoundInputs. The coordinator cannot add any to it afterwards.
+        const signedOutpoints = round.transactionData?.inputs.map(({ outpoint }) => outpoint) ?? [];
+        prison.detainForBlameRound([...inputs, ...addresses], id, signedOutpoints);
     } else if (endRoundState === EndRoundState.AbortedNotEnoughAlices) {
         prison.releaseRegisteredInmates(id);
     } else if (endRoundState === EndRoundState.TransactionBroadcasted) {

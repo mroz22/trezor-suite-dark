@@ -8,6 +8,9 @@ import { CoordinatorMisbehaviorError } from '../coordinator';
 // 32 bytes of the transaction hash and 4 bytes of the output index.
 const OUTPOINT_PATTERN = /^[0-9a-f]{72}$/i;
 
+// Round.BlameOf of a round which is not a blame round.
+const NO_BLAME_OF = '0'.repeat(64);
+
 // Coordinator outpoints are uppercase and own outpoints lowercase, compare the parsed values.
 const getOutpointKey = (outpoint: string) => {
     if (!OUTPOINT_PATTERN.test(outpoint)) return;
@@ -32,11 +35,14 @@ const getScriptPubKey = (coordinatorScriptPubKey: string) => {
  * before the transaction is signed.
  * Throws CoordinatorMisbehaviorError if the coordinator provably lies and a plain Error if the
  * round has no inputs of other participants or ownership proofs which the device refuses although
- * their owners signed them for the round. Returns the sorted outpoints (hash:index) of all inputs
- * of the round.
+ * their owners signed them for the round, or if it is a blame round without known inputs of the
+ * failed round. Returns the sorted outpoints (hash:index) of all inputs of the round.
  */
 export const verifyRoundInputs = (
-    round: Pick<CoinjoinRoundShape, 'inputs' | 'coinjoinState' | 'commitmentData'>,
+    round: Pick<
+        CoinjoinRoundShape,
+        'inputs' | 'coinjoinState' | 'commitmentData' | 'blameOf' | 'blameOfOutpoints'
+    >,
     { minInputCount, logger }: Pick<CoinjoinRoundOptions, 'minInputCount' | 'logger'>,
 ): string[] => {
     const registeredInputs = getRoundEvents('InputAdded', round.coinjoinState.Events);
@@ -97,6 +103,34 @@ export const verifyRoundInputs = (
     const ownInputKeys = new Set(round.inputs.map(({ outpoint }) => getOutpointKey(outpoint)));
     if (Array.from(registeredCoins.keys()).every(key => ownInputKeys.has(key))) {
         throw new Error('No inputs of other participants in the round.');
+    }
+
+    // As WalletWasabi CoinJoinClient (BlameRoundRestrictions): an honest coordinator lets into a
+    // blame round only inputs of the failed round (Arena.EndRoundAndTryCreateBlameRoundAsync), all
+    // of them in the transaction this client signed there. Otherwise the coordinator could fill the
+    // blame round with fresh inputs of its own and isolate this client.
+    if (round.blameOf !== NO_BLAME_OF) {
+        const { blameOfOutpoints } = round;
+        if (!blameOfOutpoints) {
+            // Not expected: selectRound joins a blame round only with them.
+            throw new Error('Inputs of the failed round are unknown.');
+        }
+
+        const failedRoundInputKeys = new Set(
+            blameOfOutpoints.map(outpoint => getOutpointKey(outpoint)),
+        );
+        const unexpectedOutpoints = registeredInputs
+            .map(({ Coin }) => Coin.Outpoint)
+            .filter(outpoint => !failedRoundInputKeys.has(getOutpointKey(outpoint)));
+        const [unexpectedOutpoint] = unexpectedOutpoints;
+        if (unexpectedOutpoint) {
+            logger.warn(
+                `Input ~~${unexpectedOutpoint}~~ and ${unexpectedOutpoints.length - 1} other inputs of the blame round were not in the failed round`,
+            );
+            throw new CoordinatorMisbehaviorError(
+                `Inconsistent data. ${unexpectedOutpoints.length} inputs of the blame round were not in the failed round.`,
+            );
+        }
     }
 
     // As WalletWasabi MultipartyTransactionState.VerifyOwnershipProofs: only the owner of a coin can
