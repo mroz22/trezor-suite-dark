@@ -114,8 +114,8 @@ export const selectTargetAnonymityByAccountKey = (
     return coinjoinAccount.setup?.targetAnonymity ?? DEFAULT_TARGET_ANONYMITY;
 };
 
-// The same merge initCoinjoinServiceThunk hands to the client.
-const selectCoinjoinNetworkConfig = (state: CoinjoinRootState, symbol: CoinjoinSymbol) => {
+// Settings of the network's coinjoin client, with the debug overrides.
+export const selectCoinjoinNetworkConfig = (state: CoinjoinRootState, symbol: CoinjoinSymbol) => {
     const debug = selectCoinjoinDebug(state);
     const config = getCoinjoinConfig(symbol, debug?.coinjoinServerEnvironment?.[symbol]);
 
