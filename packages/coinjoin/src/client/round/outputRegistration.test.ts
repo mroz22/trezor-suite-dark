@@ -8,6 +8,7 @@ import {
     createInputAddedEvent,
 } from '../../__fixtures__/round.fixture';
 import { verifyOwnershipProof } from '../../utils/ownershipProof';
+import { CoordinatorMisbehaviorError } from '../coordinator';
 
 // mock random delay function
 jest.mock('@trezor/utils', () => {
@@ -72,6 +73,7 @@ describe('outputRegistration', () => {
         // @ts-expect-error: indexing with noUncheckedIndexedAccess
         const firstInput: (typeof inputs)[number] = inputs[0];
         expect(firstInput.error?.message).toMatch(/Missing confirmed credentials/);
+        expect(firstInput.error).not.toBeInstanceOf(CoordinatorMisbehaviorError);
     });
 
     it('errors on insufficient amount of available change addresses', async () => {
@@ -170,6 +172,8 @@ describe('outputRegistration', () => {
             expect(input.error?.message).toMatch(
                 /Round has 2 registered inputs but minimum required is 3/,
             );
+            // CoinjoinClient stops all accounts on it.
+            expect(input.error).toBeInstanceOf(CoordinatorMisbehaviorError);
         });
     });
 

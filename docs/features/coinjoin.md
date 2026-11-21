@@ -22,6 +22,8 @@ Suite has no default coordinator for Bitcoin and Testnet. Coinjoin works only in
 
     Suite checks that the id of each round is the hash of the round parameters, as WalletWasabi clients do since version 2.3.0, and that the round names the coordinator Suite commits to in ownership proofs (`coordinatorName`). It skips any other round with `Its id does not match its parameters and coordinator` in the warn log, and it leaves a round it joined when the parameters of the round change.
 
+    When the coordinator provably lies in a round Suite joined, for example about the round parameters, the inputs or the outputs of the user or the ownership proofs of other participants, Suite ends the coinjoin sessions of all accounts of that network, paused ones included, as cancelling coinjoin does, and shows an error toast. The warn log shows `Stopping all accounts. Coordinator misbehaved`. Coinjoin starts again only when the user starts it.
+
 ## Development
 
 For development and e2e purposes you can use local version of coinjoin backend (`Regtest` only).

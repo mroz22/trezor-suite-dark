@@ -201,7 +201,12 @@ export const outputRegistration = async (
         logger.error(`Output registration failed: (${phaseStep}) ${error.message}`);
         round.setSessionPhase(SessionPhase.OutputRegistrationFailed);
 
-        round.inputs.forEach(input => input.setError(new Error(message)));
+        // Keep the class, a lie of the coordinator stops the client (see CoinjoinClient).
+        const inputError =
+            error instanceof coordinator.CoordinatorMisbehaviorError
+                ? new coordinator.CoordinatorMisbehaviorError(message)
+                : new Error(message);
+        round.inputs.forEach(input => input.setError(inputError));
     }
 
     return round;

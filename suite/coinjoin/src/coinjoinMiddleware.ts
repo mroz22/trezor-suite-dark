@@ -322,6 +322,15 @@ export const coinjoinMiddleware =
                 );
                 api.dispatch(addToast({ type: 'coinjoin-interrupted' }));
             }
+
+            // The coordinator provably lied to the client. The user may start coinjoin again.
+            if (action.payload.phase === SessionPhase.CoordinatorMisbehavior) {
+                api.dispatch(
+                    coinjoinClientActions.stopCoinjoinSessionsOnCoordinatorMisbehaviorThunk(
+                        accountKeys,
+                    ),
+                );
+            }
         }
 
         return action;
