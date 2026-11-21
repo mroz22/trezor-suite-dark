@@ -17,6 +17,7 @@ import {
 } from '@suite-common/wallet-core';
 import { type AccountKey } from '@suite-common/wallet-types';
 import { getInputSize, getOutputSize } from '@trezor/coinjoin';
+import { ROUND_MIN_INPUT_COUNT } from '@trezor/coinjoin/src/constants';
 import { createWeakMapSelector } from '@trezor/redux-utils';
 import { BigNumber, deepEqual } from '@trezor/utils';
 
@@ -33,6 +34,7 @@ import {
 } from './coinjoinUtils';
 import {
     CLIENT_STATUS_FALLBACK,
+    type CoinjoinNetworksConfig,
     type CoinjoinSymbol,
     DEFAULT_TARGET_ANONYMITY,
     FEE_RATE_MEDIAN_FALLBACK,
@@ -41,7 +43,9 @@ import {
     SKIP_ROUNDS_BY_DEFAULT,
     UNECONOMICAL_COINJOIN_THRESHOLD,
     ZKSNACKS_LEGAL_DOCUMENTS_VERSION,
-    getCoinjoinConfig,
+    getCoinjoinCoordinator,
+    getCoinjoinCoordinators,
+    getCoinjoinNetworkSettings,
 } from './config';
 
 export type CoinjoinRootState = {
@@ -69,6 +73,9 @@ export const selectCoinjoinIsPreloading = (state: CoinjoinRootState) =>
 export const selectCoinjoinClients = (state: CoinjoinRootState) => state.wallet.coinjoin.clients;
 
 export const selectCoinjoinDebug = (state: CoinjoinRootState) => state.wallet.coinjoin.debug;
+
+export const selectChosenCoinjoinCoordinatorUrls = (state: CoinjoinRootState) =>
+    state.wallet.coinjoin.chosenCoordinatorUrls;
 
 export const selectRoundsDurationInHours = (state: CoinjoinRootState) =>
     state.wallet.coinjoin.config.roundsDurationInHours;
@@ -114,17 +121,71 @@ export const selectTargetAnonymityByAccountKey = (
     return coinjoinAccount.setup?.targetAnonymity ?? DEFAULT_TARGET_ANONYMITY;
 };
 
-// Settings of the network's coinjoin client, with the debug overrides.
-export const selectCoinjoinNetworkConfig = (state: CoinjoinRootState, symbol: CoinjoinSymbol) => {
-    const debug = selectCoinjoinDebug(state);
-    const config = getCoinjoinConfig(symbol, debug?.coinjoinServerEnvironment?.[symbol]);
+// Coordinators the network can mix through, see selectCoinjoinNetworkConfig for the one it uses.
+export const selectCoinjoinCoordinatorsBySymbol = (
+    state: CoinjoinRootState,
+    symbol: CoinjoinSymbol,
+) =>
+    getCoinjoinCoordinators(
+        symbol,
+        selectCoinjoinDebug(state)?.coinjoinServerEnvironment?.[symbol],
+    );
 
-    return { ...config, ...debug?.coinjoinConfigOverride?.[symbol] };
+// A coordinator passed at startup through debug.coinjoinConfigOverride replaces the listed ones.
+export const selectIsCoinjoinCoordinatorOverriddenBySymbol = (
+    state: CoinjoinRootState,
+    symbol: CoinjoinSymbol,
+) => !!selectCoinjoinDebug(state)?.coinjoinConfigOverride?.[symbol]?.coordinatorUrl;
+
+// Settings of the network's coinjoin client: the chosen coordinator and the debug overrides.
+export const selectCoinjoinNetworkConfig = (
+    state: CoinjoinRootState,
+    symbol: CoinjoinSymbol,
+): CoinjoinNetworksConfig => {
+    const debug = selectCoinjoinDebug(state);
+    const override = debug?.coinjoinConfigOverride?.[symbol];
+    const { settings, coordinators } = getCoinjoinNetworkSettings(
+        symbol,
+        debug?.coinjoinServerEnvironment?.[symbol],
+    );
+    // The fields a coordinator passed at startup does not set come from the network, not from a
+    // listed coordinator.
+    const coordinator = selectIsCoinjoinCoordinatorOverriddenBySymbol(state, symbol)
+        ? undefined
+        : getCoinjoinCoordinator(
+              coordinators,
+              selectChosenCoinjoinCoordinatorUrls(state)?.[symbol],
+          );
+
+    return { ...settings, ...coordinator, ...override };
 };
 
-// Mixing needs a coordinator. The public ones shut down, so btc and test have one only when it is
-// passed at startup through `--state.wallet.coinjoin.debug.coinjoinConfigOverride.<symbol>`, while
-// regtest keeps its local one. The message-system flag can still turn coinjoin off remotely.
+// Highest coordinator fee rate a coinjoin session of the network authorizes on the device.
+export const selectCoordinatorFeeRateCapBySymbol = (
+    state: CoinjoinRootState,
+    symbol: CoinjoinSymbol,
+) => selectCoinjoinNetworkConfig(state, symbol).maxCoordinatorFeeRate ?? MAX_COORDINATOR_FEE_RATE;
+
+// Rounds of the network with fewer inputs are skipped, coinjoins with fewer inputs refused.
+export const selectCoinjoinMinInputCountBySymbol = (
+    state: CoinjoinRootState,
+    symbol: CoinjoinSymbol,
+) => {
+    const { minInputCount, network } = selectCoinjoinNetworkConfig(state, symbol);
+
+    return minInputCount ?? ROUND_MIN_INPUT_COUNT[network];
+};
+
+// A session, also a paused one, authorized the coordinator of the network on the device.
+export const selectHasCoinjoinSessionBySymbol = (
+    state: CoinjoinRootState,
+    symbol: CoinjoinSymbol,
+) => selectCoinjoinAccounts(state).some(account => account.symbol === symbol && !!account.session);
+
+// Mixing needs a coordinator, listed for the network or passed at startup through
+// `--state.wallet.coinjoin.debug.coinjoinConfigOverride.<symbol>`. The public ones shut down, so btc
+// and test list none, while regtest lists its local one. The message-system flag can still turn
+// coinjoin off remotely.
 export const selectIsMixingEnabled = (
     state: CoinjoinRootState & MessageSystemRootState,
     symbol: NetworkSymbol,
@@ -351,11 +412,9 @@ export const selectMaxCoordinatorFeeRateByAccountKey = (
         return;
     }
 
-    const config = selectCoinjoinNetworkConfig(state, coinjoinAccount.symbol);
-
     return Math.min(
         coinjoinClient.coordinationFeeRate.rate,
-        config.maxCoordinatorFeeRate ?? MAX_COORDINATOR_FEE_RATE,
+        selectCoordinatorFeeRateCapBySymbol(state, coinjoinAccount.symbol),
     );
 };
 

@@ -43,6 +43,7 @@ import {
     selectCoinjoinAccounts,
     selectCoinjoinClients,
     selectCoinjoinNetworkConfig,
+    selectHasCoinjoinSessionBySymbol,
     selectRoundsDurationInHours,
     selectRoundsLeftByAccountKey,
     selectRoundsNeededByAccountKey,
@@ -141,6 +142,11 @@ export const setDebugSettings = createAction(
     (payload: CoinjoinDebugSettings) => ({ payload }),
 );
 
+export const chooseCoordinator = createAction(
+    COINJOIN.CHOOSE_COORDINATOR,
+    (symbol: CoinjoinSymbol, coordinatorUrl: string) => ({ payload: { symbol, coordinatorUrl } }),
+);
+
 export const coinjoinSessionPause = createAction(COINJOIN.SESSION_PAUSE, (accountKey: string) => ({
     payload: { accountKey },
 }));
@@ -152,6 +158,7 @@ export const coinjoinAccountUnregister = createAction(
 
 export type CoinjoinClientAction = ReturnType<
     | typeof setDebugSettings
+    | typeof chooseCoordinator
     | typeof clientEnable
     | typeof clientDisable
     | typeof clientEnableSuccess
@@ -890,8 +897,10 @@ export const initCoinjoinServiceThunk =
         // retry if client was not enabled properly until now
         if (knownService && knownClient?.status === 'unavailable') {
             if (!isCoinjoinDisabledByFeatureFlag) {
-                const status = await knownService.client.enable();
-                if (status.success) {
+                const { client } = knownService;
+                const status = await client.enable();
+                // Unless the client was replaced for another coordinator meanwhile.
+                if (status.success && knownService.client === client) {
                     dispatch(clientEnableSuccess(symbol, status));
                 }
             }
@@ -918,6 +927,68 @@ export const initCoinjoinServiceThunk =
             await dispatch(enableClientThunk(symbol, service.client));
 
             return service;
+        } catch (error) {
+            CoinjoinService.removeInstance(symbol);
+            dispatch(clientDisable(symbol));
+            dispatch(
+                notificationsActions.addToast({
+                    type: 'error',
+                    error: `CoinjoinClient ${error.message}`,
+                }),
+            );
+        }
+    };
+
+type ChooseCoinjoinCoordinatorThunkState = InitCoinjoinServiceThunkState;
+
+export const chooseCoinjoinCoordinatorThunk =
+    (symbol: CoinjoinSymbol, coordinatorUrl: string) =>
+    async (dispatch: Dispatch, getState: () => ChooseCoinjoinCoordinatorThunkState) => {
+        // A session authorized its coordinator on the device. A client being enabled would keep
+        // the previous one.
+        if (
+            selectHasCoinjoinSessionBySymbol(getState(), symbol) ||
+            selectCoinjoinClients(getState())[symbol]?.status === 'loading'
+        ) {
+            return;
+        }
+
+        const previousCoordinatorUrl = selectCoinjoinNetworkConfig(
+            getState(),
+            symbol,
+        ).coordinatorUrl;
+        dispatch(chooseCoordinator(symbol, coordinatorUrl));
+        const settings = selectCoinjoinNetworkConfig(getState(), symbol);
+        // Without a client, the next one is created with the chosen coordinator.
+        if (
+            settings.coordinatorUrl === previousCoordinatorUrl ||
+            !CoinjoinService.getInstance(symbol)
+        ) {
+            return;
+        }
+
+        dispatch(clientDisable(symbol));
+        dispatch(clientEnable(symbol));
+
+        try {
+            const service = await CoinjoinService.replaceClient({
+                symbol,
+                prison: getClientPrison(getState(), symbol),
+                settings,
+            });
+            // Removed meanwhile, the next client is created with the chosen coordinator.
+            if (!service) {
+                dispatch(clientDisable(symbol));
+
+                return;
+            }
+
+            if (selectIsFeatureDisabled(getState(), Feature.coinjoin)) {
+                dispatch(clientEnableFailed(symbol));
+
+                return;
+            }
+            await dispatch(enableClientThunk(symbol, service.client));
         } catch (error) {
             CoinjoinService.removeInstance(symbol);
             dispatch(clientDisable(symbol));

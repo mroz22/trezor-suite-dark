@@ -18,7 +18,24 @@ export type CoinjoinNetworksConfig = CoinjoinBackendSettings &
         maxCoordinatorFeeRate?: number;
     };
 
-type ServerEnvironment = PartialRecord<CoinjoinServerEnvironment, CoinjoinNetworksConfig>;
+// A coordinator a network can mix through. Its fields replace those of the network config.
+export type CoinjoinCoordinatorConfig = Required<Pick<CoinjoinNetworksConfig, 'coordinatorUrl'>> &
+    Pick<
+        CoinjoinNetworksConfig,
+        'coordinatorName' | 'wabisabiBackendUrl' | 'maxCoordinatorFeeRate'
+    >;
+
+// The network's coordinatorName is the identifier used without a coordinator, for example with a
+// coordinatorUrl passed at startup through debug.coinjoinConfigOverride.
+type CoinjoinNetworkEnvironmentConfig = Omit<
+    CoinjoinNetworksConfig,
+    'coordinatorUrl' | 'wabisabiBackendUrl' | 'maxCoordinatorFeeRate'
+> & {
+    // The first one is the default, users can choose another one in the coinjoin settings.
+    coordinators?: readonly CoinjoinCoordinatorConfig[];
+};
+
+type ServerEnvironment = PartialRecord<CoinjoinServerEnvironment, CoinjoinNetworkEnvironmentConfig>;
 
 // Suite Dark: btc uses the kruw.io coordinator below. The test network has no coordinator because the
 // public ones shut down; testers set one through debug.coinjoinConfigOverride, see docs/features/coinjoin.md.
@@ -84,8 +101,13 @@ export const COINJOIN_NETWORKS: PartialRecord<'btc' | 'test' | 'regtest', Server
         localhost: {
             network: 'regtest',
             coordinatorName: 'CoinJoinCoordinatorIdentifier',
-            coordinatorUrl: 'http://127.0.0.1:8081/backend/wabisabi/',
-            wabisabiBackendUrl: 'http://127.0.0.1:8081/backend/',
+            coordinators: [
+                {
+                    coordinatorUrl: 'http://127.0.0.1:8081/backend/wabisabi/',
+                    coordinatorName: 'CoinJoinCoordinatorIdentifier',
+                    wabisabiBackendUrl: 'http://127.0.0.1:8081/backend/',
+                },
+            ],
             // backend settings
             blockbookUrls: ['http://127.0.0.1:19121'],
             baseBlockHeight: 0,
@@ -135,10 +157,10 @@ export const ANONYMITY_GAINS_HINDSIGHT_COUNT = 10;
 // What are the oldest coinjoin transactions taken into account
 export const ANONYMITY_GAINS_HINDSIGHT_DAYS = 30;
 
-export const getCoinjoinConfig = (
+const getNetworkEnvironmentConfig = (
     symbol: CoinjoinSymbol,
     environment?: CoinjoinServerEnvironment,
-): CoinjoinNetworksConfig => {
+) => {
     const config = COINJOIN_NETWORKS[symbol as keyof typeof COINJOIN_NETWORKS];
     // Debug settings may still store a removed environment (test 'staging'), use the default one.
     const settings = config
@@ -154,5 +176,44 @@ export const getCoinjoinConfig = (
     if (!settings)
         throw new Error(`Missing settings for coinjoin network ${symbol} env ${environment}`);
 
-    return { ...settings };
+    return settings;
+};
+
+// One empty list, so that selectors return the same value every time.
+const NO_COORDINATORS: readonly CoinjoinCoordinatorConfig[] = [];
+
+// Settings of the network without a coordinator, and the coordinators listed for it.
+export const getCoinjoinNetworkSettings = (
+    symbol: CoinjoinSymbol,
+    environment?: CoinjoinServerEnvironment,
+) => {
+    const { coordinators = NO_COORDINATORS, ...settings } = getNetworkEnvironmentConfig(
+        symbol,
+        environment,
+    );
+
+    return { settings, coordinators };
+};
+
+export const getCoinjoinCoordinators = (
+    symbol: CoinjoinSymbol,
+    environment?: CoinjoinServerEnvironment,
+) => getCoinjoinNetworkSettings(symbol, environment).coordinators;
+
+// The coordinator of the given url, or the default one (the first listed) when that one is not
+// listed, for example no longer after an update.
+export const getCoinjoinCoordinator = (
+    coordinators: readonly CoinjoinCoordinatorConfig[],
+    coordinatorUrl?: string,
+): CoinjoinCoordinatorConfig | undefined =>
+    coordinators.find(listed => listed.coordinatorUrl === coordinatorUrl) ?? coordinators[0];
+
+// Settings of the network with its default coordinator.
+export const getCoinjoinConfig = (
+    symbol: CoinjoinSymbol,
+    environment?: CoinjoinServerEnvironment,
+): CoinjoinNetworksConfig => {
+    const { settings, coordinators } = getCoinjoinNetworkSettings(symbol, environment);
+
+    return { ...settings, ...getCoinjoinCoordinator(coordinators) };
 };

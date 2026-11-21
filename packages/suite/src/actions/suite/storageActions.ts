@@ -4,6 +4,7 @@ import { type ThunkDispatch } from 'redux-thunk';
 import { type DesktopBluetoothDevice } from '@suite/bluetooth';
 import {
     type CoinjoinRootState,
+    selectChosenCoinjoinCoordinatorUrls,
     selectCoinjoinAccountByKey,
     selectCoinjoinDebug,
 } from '@suite/coinjoin';
@@ -246,6 +247,28 @@ export const saveCoinjoinDebugSettingsThunk =
         if (!extra.services.db.isAccessible()) return;
         const debug = selectCoinjoinDebug(getState());
         extra.services.db.addItem('coinjoinDebugSettings', debug || {}, 'debug', true);
+    };
+
+type SaveCoinjoinCoordinatorSettingsThunkState = CoinjoinRootState;
+
+type SaveCoinjoinCoordinatorSettingsThunkDeps = WithServices<DbDep>;
+
+// Kept for every wallet, like other app settings, also when no device is remembered.
+export const saveCoinjoinCoordinatorSettingsThunk =
+    () =>
+    (
+        _dispatch: Dispatch<UnknownAction>,
+        getState: () => SaveCoinjoinCoordinatorSettingsThunkState,
+        extra: SaveCoinjoinCoordinatorSettingsThunkDeps,
+    ) => {
+        if (!extra.services.db.isAccessible()) return;
+        const chosenCoordinatorUrls = selectChosenCoinjoinCoordinatorUrls(getState());
+        extra.services.db.addItem(
+            'coinjoinDebugSettings',
+            { chosenCoordinatorUrls },
+            'coordinators',
+            true,
+        );
     };
 
 type SaveThpCredentialsThunkState = ThpRootState;
