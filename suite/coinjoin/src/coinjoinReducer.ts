@@ -8,6 +8,7 @@ import { type CoinjoinClientAction } from './coinjoinClientActions';
 import * as COINJOIN from './coinjoinConstants';
 import {
     type CoinjoinAccount,
+    type CoinjoinCoordinatorSettings,
     type CoinjoinDebugSettings,
     type CoinjoinState,
 } from './coinjoinTypes';
@@ -36,6 +37,7 @@ type StorageLoadCoinjoinAction = {
     payload: {
         coinjoinAccounts: CoinjoinAccount[];
         coinjoinDebugSettings?: CoinjoinDebugSettings;
+        coinjoinCoordinatorSettings?: CoinjoinCoordinatorSettings;
     };
 };
 
@@ -448,10 +450,19 @@ export const coinjoinReducer = (
             case '@storage/load': // hack: to prevent dependency
                 draft.accounts = action.payload.coinjoinAccounts;
                 draft.debug = action.payload.coinjoinDebugSettings;
+                draft.chosenCoordinatorUrls =
+                    action.payload.coinjoinCoordinatorSettings?.chosenCoordinatorUrls;
                 break;
 
             case COINJOIN.SET_DEBUG_SETTINGS:
                 updateDebugMode(draft, action.payload);
+                break;
+
+            case COINJOIN.CHOOSE_COORDINATOR:
+                draft.chosenCoordinatorUrls = {
+                    ...draft.chosenCoordinatorUrls,
+                    [action.payload.symbol]: action.payload.coordinatorUrl,
+                };
                 break;
 
             case accountsActions.createAccount.type:

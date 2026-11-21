@@ -36,6 +36,7 @@ import { promiseAllSequence } from '@trezor/utils';
 
 import * as fixtures from './__fixtures__/coinjoinClientActions';
 import {
+    chooseCoinjoinCoordinatorThunk,
     clientEmitException,
     clientSessionPhase,
     initCoinjoinServiceThunk,
@@ -46,9 +47,11 @@ import {
     stopCoinjoinSessionThunk,
 } from './coinjoinClientActions';
 import { coinjoinMiddleware } from './coinjoinMiddleware';
-import { coinjoinReducer } from './coinjoinReducer';
+import { initialState as coinjoinInitialState, coinjoinReducer } from './coinjoinReducer';
 import { type CoinjoinRootState } from './coinjoinSelectors';
 import { CoinjoinService } from './coinjoinService';
+import { type CoinjoinAccount, type CoinjoinSession, type CoinjoinState } from './coinjoinTypes';
+import { COINJOIN_NETWORKS, type CoinjoinCoordinatorConfig } from './config';
 
 const TrezorConnect = testMocks.getTrezorConnectMock();
 jest.mock('./coinjoinService', () => {
@@ -309,6 +312,169 @@ describe('coinjoinClientActions', () => {
         });
         const cli3a = await store.dispatch(initCoinjoinServiceThunk(testSymbol));
         expect(cli3a).toBe(undefined); // undefined because cli3 is not loaded yet
+    });
+
+    describe('chooseCoinjoinCoordinatorThunk', () => {
+        const DEFAULT_COORDINATOR: CoinjoinCoordinatorConfig = {
+            coordinatorUrl: 'https://default.example/wabisabi/',
+            coordinatorName: 'CoinJoinCoordinatorIdentifier',
+            wabisabiBackendUrl: 'https://default.example/',
+        };
+        const OTHER_COORDINATOR: CoinjoinCoordinatorConfig = {
+            coordinatorUrl: 'https://other.example/wabisabi/',
+            coordinatorName: 'OtherCoordinatorIdentifier',
+            maxCoordinatorFeeRate: 0,
+        };
+        const SESSION: CoinjoinSession = {
+            targetAnonymity: 10,
+            maxRounds: 10,
+            maxFeePerKvbyte: 1,
+            maxCoordinatorFeeRate: 0,
+            timeCreated: 0,
+            sessionPhaseQueue: [],
+            signedRounds: [],
+        };
+
+        const getCoinjoinState = (accounts: CoinjoinAccount[] = []): CoinjoinState => ({
+            ...coinjoinInitialState,
+            accounts,
+        });
+
+        beforeEach(() => {
+            jest.replaceProperty(COINJOIN_NETWORKS, 'btc', {
+                public: {
+                    ...COINJOIN_NETWORKS.btc!.public!,
+                    coordinators: [DEFAULT_COORDINATOR, OTHER_COORDINATOR],
+                },
+            });
+        });
+
+        afterEach(() => {
+            jest.restoreAllMocks();
+            CoinjoinService.removeInstance(btcSymbol);
+        });
+
+        it('replaces the client of the network with one for the chosen coordinator', async () => {
+            const prisonInmate = { type: 'output' as const, sentenceStart: 0, sentenceEnd: 10000 };
+            const account = mockWalletAccount({
+                symbol: btcSymbol,
+                accountType: 'coinjoin',
+                utxo: [],
+                addresses: { change: [], used: [], unused: [] },
+            });
+            const store = initStore({
+                accounts: [account],
+                coinjoin: getCoinjoinState([
+                    {
+                        key: account.key,
+                        symbol: btcSymbol,
+                        rawLiquidityClue: null,
+                        prison: { A0: prisonInmate },
+                    },
+                ]),
+            });
+            const createSpy = jest.spyOn(CoinjoinService, 'createInstance');
+            const replaceSpy = jest.spyOn(CoinjoinService, 'replaceClient');
+            const service = await store.dispatch(initCoinjoinServiceThunk(btcSymbol));
+            expect(createSpy.mock.calls[0]?.[0].settings).toMatchObject(DEFAULT_COORDINATOR);
+            const previousClient = service?.client;
+
+            await store.dispatch(
+                chooseCoinjoinCoordinatorThunk(btcSymbol, OTHER_COORDINATOR.coordinatorUrl),
+            );
+
+            const { settings, prison } = replaceSpy.mock.calls[0]![0];
+            expect(settings).toMatchObject(OTHER_COORDINATOR);
+            expect(settings.wabisabiBackendUrl).toBeUndefined();
+            expect(prison).toEqual([{ id: 'A0', accountKey: account.key, ...prisonInmate }]);
+            expect(previousClient?.disable).toHaveBeenCalledTimes(1);
+            const { coinjoin } = store.getState().wallet;
+            expect(coinjoin.chosenCoordinatorUrls).toEqual({
+                btc: OTHER_COORDINATOR.coordinatorUrl,
+            });
+            expect(coinjoin.clients[btcSymbol]?.status).toBe('loaded');
+            // The new client handles the events.
+            const { client } = CoinjoinService.getInstance(btcSymbol)!;
+            expect(client).not.toBe(previousClient);
+            expect(client.on).toHaveBeenCalledWith('status', expect.any(Function));
+
+            // The same coordinator again changes nothing.
+            await store.dispatch(
+                chooseCoinjoinCoordinatorThunk(btcSymbol, OTHER_COORDINATOR.coordinatorUrl),
+            );
+            expect(replaceSpy).toHaveBeenCalledTimes(1);
+        });
+
+        it('only keeps the choice when the network has no client yet', async () => {
+            const store = initStore();
+            const replaceSpy = jest.spyOn(CoinjoinService, 'replaceClient');
+
+            await store.dispatch(
+                chooseCoinjoinCoordinatorThunk(btcSymbol, OTHER_COORDINATOR.coordinatorUrl),
+            );
+
+            expect(replaceSpy).not.toHaveBeenCalled();
+            expect(store.getState().wallet.coinjoin.chosenCoordinatorUrls).toEqual({
+                btc: OTHER_COORDINATOR.coordinatorUrl,
+            });
+        });
+
+        it('keeps the coordinator while a session of the network exists, also a paused one', async () => {
+            const store = initStore({
+                coinjoin: getCoinjoinState([
+                    {
+                        key: mockAccountKey({ symbol: btcSymbol }),
+                        symbol: btcSymbol,
+                        rawLiquidityClue: null,
+                        session: { ...SESSION, paused: true },
+                    },
+                ]),
+            });
+            const replaceSpy = jest.spyOn(CoinjoinService, 'replaceClient');
+            await store.dispatch(initCoinjoinServiceThunk(btcSymbol));
+
+            await store.dispatch(
+                chooseCoinjoinCoordinatorThunk(btcSymbol, OTHER_COORDINATOR.coordinatorUrl),
+            );
+
+            expect(replaceSpy).not.toHaveBeenCalled();
+            expect(store.getState().wallet.coinjoin.chosenCoordinatorUrls).toBeUndefined();
+        });
+
+        it('keeps the coordinator while the client of the network is being enabled', async () => {
+            const store = initStore();
+            const replaceSpy = jest.spyOn(CoinjoinService, 'replaceClient');
+
+            const init = store.dispatch(initCoinjoinServiceThunk(btcSymbol));
+            await store.dispatch(
+                chooseCoinjoinCoordinatorThunk(btcSymbol, OTHER_COORDINATOR.coordinatorUrl),
+            );
+            await init;
+
+            expect(replaceSpy).not.toHaveBeenCalled();
+            expect(store.getState().wallet.coinjoin.chosenCoordinatorUrls).toBeUndefined();
+        });
+
+        it('removes the instance when the new client fails', async () => {
+            const store = initStore();
+            await store.dispatch(initCoinjoinServiceThunk(btcSymbol));
+            jest.spyOn(CoinjoinService, 'replaceClient').mockRejectedValueOnce(
+                new Error('Start failed'),
+            );
+
+            await store.dispatch(
+                chooseCoinjoinCoordinatorThunk(btcSymbol, OTHER_COORDINATOR.coordinatorUrl),
+            );
+
+            expect(CoinjoinService.getInstance(btcSymbol)).toBeUndefined();
+            expect(store.getState().wallet.coinjoin.clients[btcSymbol]).toBeUndefined();
+            expect(store.getActions()).toContainEqual(
+                expect.objectContaining({
+                    type: notificationsActions.addToast.type,
+                    payload: expect.objectContaining({ error: 'CoinjoinClient Start failed' }),
+                }),
+            );
+        });
     });
 
     it('initCoinjoinServiceThunk and throw error', async () => {

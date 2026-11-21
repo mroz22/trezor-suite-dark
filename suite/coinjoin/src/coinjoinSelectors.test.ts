@@ -7,11 +7,25 @@ import { RoundPhase } from '@trezor/coinjoin';
 import { initialState } from './coinjoinReducer';
 import {
     type CoinjoinRootState,
+    selectCoinjoinMinInputCountBySymbol,
+    selectCoinjoinNetworkConfig,
+    selectCoordinatorFeeRateCapBySymbol,
+    selectHasCoinjoinSessionBySymbol,
+    selectIsCoinjoinCoordinatorOverriddenBySymbol,
     selectMaxCoordinatorFeeRateByAccountKey,
     selectRegisteredUtxosByAccountKey,
 } from './coinjoinSelectors';
-import { type CoinjoinAccount, WabiSabiProtocolErrorCode } from './coinjoinTypes';
-import { CLIENT_STATUS_FALLBACK } from './config';
+import {
+    type CoinjoinAccount,
+    type CoinjoinState,
+    WabiSabiProtocolErrorCode,
+} from './coinjoinTypes';
+import {
+    CLIENT_STATUS_FALLBACK,
+    COINJOIN_NETWORKS,
+    type CoinjoinCoordinatorConfig,
+    MAX_COORDINATOR_FEE_RATE,
+} from './config';
 
 const btcSymbol = asNetworkSymbol('btc');
 const ACCOUNT_KEY = mockAccountKey({ symbol: btcSymbol });
@@ -86,6 +100,126 @@ describe('selectMaxCoordinatorFeeRateByAccountKey', () => {
 
     it('returns undefined without a coinjoin client', () => {
         expect(selectMaxCoordinatorFeeRateByAccountKey(getState({}), ACCOUNT_KEY)).toBeUndefined();
+    });
+});
+
+describe('coordinator selectors', () => {
+    const testSymbol = asNetworkSymbol('test');
+    const DEFAULT_COORDINATOR: CoinjoinCoordinatorConfig = {
+        coordinatorUrl: 'https://default.example/wabisabi/',
+        coordinatorName: 'CoinJoinCoordinatorIdentifier',
+        wabisabiBackendUrl: 'https://default.example/',
+    };
+    const OTHER_COORDINATOR: CoinjoinCoordinatorConfig = {
+        coordinatorUrl: 'https://other.example/wabisabi/',
+        coordinatorName: 'OtherCoordinatorIdentifier',
+        maxCoordinatorFeeRate: 0,
+    };
+
+    const getCoordinatorState = (coinjoin: Partial<CoinjoinState>): CoinjoinRootState => ({
+        wallet: { coinjoin: { ...initialState, ...coinjoin } },
+    });
+
+    beforeEach(() => {
+        jest.replaceProperty(COINJOIN_NETWORKS, 'btc', {
+            public: {
+                ...COINJOIN_NETWORKS.btc!.public!,
+                coordinators: [DEFAULT_COORDINATOR, OTHER_COORDINATOR],
+            },
+        });
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it('uses the default coordinator until the user chooses another one', () => {
+        const state = getCoordinatorState({});
+
+        expect(selectCoinjoinNetworkConfig(state, btcSymbol)).toMatchObject(DEFAULT_COORDINATOR);
+        expect(selectCoordinatorFeeRateCapBySymbol(state, btcSymbol)).toBe(
+            MAX_COORDINATOR_FEE_RATE,
+        );
+    });
+
+    it('uses the chosen coordinator with its own fields only', () => {
+        const state = getCoordinatorState({
+            chosenCoordinatorUrls: { [btcSymbol]: OTHER_COORDINATOR.coordinatorUrl },
+        });
+
+        const config = selectCoinjoinNetworkConfig(state, btcSymbol);
+        expect(config).toMatchObject(OTHER_COORDINATOR);
+        expect(config.wabisabiBackendUrl).toBeUndefined();
+        expect(selectCoordinatorFeeRateCapBySymbol(state, btcSymbol)).toBe(0);
+    });
+
+    it('uses a coordinator passed at startup with the network fields instead of a listed one', () => {
+        const state = getCoordinatorState({
+            chosenCoordinatorUrls: { [btcSymbol]: OTHER_COORDINATOR.coordinatorUrl },
+            debug: {
+                coinjoinConfigOverride: {
+                    [btcSymbol]: {
+                        coordinatorUrl: 'https://startup.example/wabisabi/',
+                        minInputCount: 5,
+                    },
+                },
+            },
+        });
+
+        const config = selectCoinjoinNetworkConfig(state, btcSymbol);
+        expect(config.coordinatorUrl).toBe('https://startup.example/wabisabi/');
+        expect(config.coordinatorName).toBe('CoinJoinCoordinatorIdentifier');
+        expect(config.wabisabiBackendUrl).toBeUndefined();
+        expect(selectCoordinatorFeeRateCapBySymbol(state, btcSymbol)).toBe(
+            MAX_COORDINATOR_FEE_RATE,
+        );
+        expect(selectCoinjoinMinInputCountBySymbol(state, btcSymbol)).toBe(5);
+        expect(selectIsCoinjoinCoordinatorOverriddenBySymbol(state, btcSymbol)).toBe(true);
+        expect(selectIsCoinjoinCoordinatorOverriddenBySymbol(state, testSymbol)).toBe(false);
+    });
+
+    it('keeps the listed coordinator under an override without a coordinator url', () => {
+        const state = getCoordinatorState({
+            debug: { coinjoinConfigOverride: { [btcSymbol]: { maxCoordinatorFeeRate: 0.003 } } },
+        });
+
+        expect(selectCoinjoinNetworkConfig(state, btcSymbol)).toMatchObject({
+            ...DEFAULT_COORDINATOR,
+            maxCoordinatorFeeRate: 0.003,
+        });
+        expect(selectIsCoinjoinCoordinatorOverriddenBySymbol(state, btcSymbol)).toBe(false);
+    });
+
+    it('takes the minimum of inputs from the network by default', () => {
+        expect(selectCoinjoinMinInputCountBySymbol(getCoordinatorState({}), btcSymbol)).toBe(21);
+    });
+
+    it('tells whether a session, also a paused one, runs on the network', () => {
+        const account: CoinjoinAccount = {
+            key: ACCOUNT_KEY,
+            symbol: btcSymbol,
+            rawLiquidityClue: null,
+            session: {
+                targetAnonymity: 10,
+                maxRounds: 10,
+                maxFeePerKvbyte: 1,
+                maxCoordinatorFeeRate: 0,
+                timeCreated: 0,
+                sessionPhaseQueue: [],
+                signedRounds: [],
+                paused: true,
+            },
+        };
+        const state = getCoordinatorState({ accounts: [account] });
+
+        expect(selectHasCoinjoinSessionBySymbol(state, btcSymbol)).toBe(true);
+        expect(selectHasCoinjoinSessionBySymbol(state, testSymbol)).toBe(false);
+        expect(
+            selectHasCoinjoinSessionBySymbol(
+                getCoordinatorState({ accounts: [{ ...account, session: undefined }] }),
+                btcSymbol,
+            ),
+        ).toBe(false);
     });
 });
 

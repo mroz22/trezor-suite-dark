@@ -11,6 +11,7 @@ export const mockCoinjoinService = () => {
     const getMockedInstance = (network: string) => {
         const client = {
             settings: { coordinatorName: '', network },
+            disable: jest.fn(),
             on: jest.fn((...args: Parameters<typeof clientEmitter.on>) => {
                 clientEmitter.on(...args);
             }),
@@ -63,6 +64,7 @@ export const mockCoinjoinService = () => {
     };
 
     type CreateInstanceParams = { symbol: CoinjoinSymbol };
+    type ReplaceClientParams = { symbol: CoinjoinSymbol };
 
     return {
         // for test purposes enable only btc symbol
@@ -79,6 +81,15 @@ export const mockCoinjoinService = () => {
             }),
             removeInstance: jest.fn((symbol: string) => {
                 delete clients[symbol];
+            }),
+            replaceClient: jest.fn(({ symbol }: ReplaceClientParams) => {
+                const instance = clients[symbol];
+                if (!instance) return;
+                const previousClient = instance.client;
+                instance.client = getMockedInstance(symbol).client;
+                previousClient.disable();
+
+                return instance;
             }),
         },
     };
