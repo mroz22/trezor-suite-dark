@@ -3,7 +3,7 @@
 // This module replaces the `tiny-secp256k1` dependency with a pure-JS,
 // independently audited alternative.
 
-import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 
 const { Point } = secp256k1;
 
@@ -70,6 +70,12 @@ function assertExtraEntropy(extraEntropy: Buffer | Uint8Array): void {
 function assertSignature(signature: Buffer | Uint8Array): void {
     if (signature.length !== 64) {
         throw new TypeError('Expected Signature');
+    }
+}
+
+function assertXOnlyPoint(publicKey: Buffer | Uint8Array): void {
+    if (publicKey.length !== 32) {
+        throw new TypeError('Expected Point');
     }
 }
 
@@ -177,6 +183,23 @@ function verify(
     }
 }
 
+/**
+ * Verifies a BIP340 Schnorr signature of a 32-byte hash with a 32-byte x-only public key.
+ * Inputs of a wrong length throw like in `verify`, but a public key that is not a valid
+ * x coordinate returns false, as BIP340 specifies.
+ */
+function verifySchnorr(
+    hash: Buffer | Uint8Array,
+    publicKey: Buffer | Uint8Array,
+    signature: Buffer | Uint8Array,
+): boolean {
+    assertHash(hash);
+    assertXOnlyPoint(publicKey);
+    assertSignature(signature);
+
+    return schnorr.verify(signature, hash, publicKey);
+}
+
 export {
     isPoint,
     isPrivate,
@@ -186,4 +209,5 @@ export {
     sign,
     signWithEntropy,
     verify,
+    verifySchnorr,
 };
