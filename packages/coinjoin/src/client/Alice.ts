@@ -17,6 +17,8 @@ import { getInputSize, getOutputSize, getWitnessFromSignature } from '../utils/c
 export class Alice implements AliceShape {
     path: string; // utxo derivation path
     outpoint: string;
+    address: string; // utxo address
+    scriptPubKey: string; // utxo scriptPubKey in hex
     amount: number;
     inputSize: number;
     outputSize: number;
@@ -41,6 +43,8 @@ export class Alice implements AliceShape {
         this.scriptType = scriptType;
         this.path = utxo.path;
         this.outpoint = utxo.outpoint;
+        this.address = utxo.address;
+        this.scriptPubKey = utxo.scriptPubKey;
         this.amount = utxo.amount;
         this.inputSize = getInputSize(scriptType);
         this.outputSize = getOutputSize(scriptType);

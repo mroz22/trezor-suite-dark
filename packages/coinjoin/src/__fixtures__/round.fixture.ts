@@ -52,14 +52,15 @@ export const INPUT_ADDED_EVENT = {
     OwnershipProof: '',
 };
 
-// P2TR input registered in the round with the given outpoint
+// P2TR input registered in the round with the given outpoint. Its script and amount are those of
+// createInput (input.fixture.ts), so it matches an own input with the same outpoint.
 export const createInputAddedEvent = (Outpoint: string): CoinjoinInputAddedEvent => ({
     Type: 'InputAdded',
     Coin: {
         Outpoint,
         TxOut: {
-            ScriptPubKey: '1 6a6daebd9abae25cdd376b811190163eb00c58e87da1867ba8546229098231c3',
-            Value: 12300000,
+            ScriptPubKey: '1 fc485427c6b286466faca747ad0faf6aaf6f7ef72ef7c81a2064df3796dbea2e',
+            Value: 1,
         },
     },
     OwnershipProof: 'not-relevant',
