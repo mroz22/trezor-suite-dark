@@ -4,11 +4,13 @@ import { networks } from '@trezor/utxo-lib';
 import { CoinjoinClient } from './CoinjoinClient';
 import { CoinjoinPrison } from './CoinjoinPrison';
 import { CoinjoinRound } from './CoinjoinRound';
+import { CoordinatorMisbehaviorError } from './coordinator';
 import { createServer } from '../../mocks/server';
 import { createInput } from '../__fixtures__/input.fixture';
 import {
     DEFAULT_ROUND,
     FEE_RATE_MEDIANS,
+    ROUND_CREATION_EVENT,
     createCoinjoinRound,
     createInputAddedEvent,
     createStatusRound,
@@ -17,7 +19,7 @@ import {
 import { EndRoundState, RoundPhase, SessionPhase } from '../enums';
 import { type RegisterAccountParams } from '../types/account';
 import type { CoinjoinInputAddedEvent, CoinjoinStateEvent, Round } from '../types/coordinator';
-import type { SerializedCoinjoinRound } from '../types/round';
+import type { SerializedCoinjoinRound, SessionPhaseEvent } from '../types/round';
 import { getScriptPubKeyFromAddress } from '../utils/coordinatorUtils';
 
 // Poll the status often, the blame round tests need several of its updates.
@@ -349,6 +351,8 @@ describe(`CoinjoinClient`, () => {
         cli.on('round', ({ round }) => {
             if (round.phase === RoundPhase.Ended) ended.resolve(round);
         });
+        const sessionPhaseSpy = jest.fn();
+        cli.on('session-phase', sessionPhaseSpy);
 
         await cli.enable();
         cli.registerAccount({
@@ -373,6 +377,7 @@ describe(`CoinjoinClient`, () => {
         ];
 
         const endedRound = await ended.promise;
+        const registeredAccounts = cli.getAccounts();
         cli.disable();
         createSpy.mockRestore();
 
@@ -386,6 +391,12 @@ describe(`CoinjoinClient`, () => {
         expect(joinedRound?.prison.isDetained(outpoint)).toMatchObject({
             roundId: DEFAULT_ROUND.Id,
         });
+        // The client stops mixing, as after the other lies.
+        expect(sessionPhaseSpy).toHaveBeenCalledWith({
+            phase: SessionPhase.CoordinatorMisbehavior,
+            accountKeys: ['account-A'],
+        });
+        expect(registeredAccounts).toEqual([]);
     });
 
     describe('blame round', () => {
@@ -613,6 +624,163 @@ describe(`CoinjoinClient`, () => {
                     ),
                 }),
             ]);
+        });
+    });
+
+    describe('coordinator misbehavior', () => {
+        const OWN_OUTPOINT = `${'a'.repeat(64)}00000000`;
+        const OTHER_OWN_OUTPOINT = `${'b'.repeat(64)}00000000`;
+
+        const createAccount = (accountKey: string): RegisterAccountParams => ({
+            accountKey,
+            scriptType: 'Taproot',
+            utxos: [],
+            changeAddresses: [],
+            targetAnonymity: 10,
+            rawLiquidityClue: 0,
+            maxFeePerKvbyte: 1,
+            maxCoordinatorFeeRate: 1,
+            maxRounds: 10,
+        });
+
+        // The first round the client gets with accounts is in output registration and has only
+        // the given inputs of account-A.
+        const mockFirstRound = (outpoints: string[]) => {
+            let firstRound: CoinjoinRound | undefined;
+            const createSpy = jest
+                .spyOn(CoinjoinRound, 'create')
+                .mockImplementation(({ accounts, prison, options }) => {
+                    if (firstRound || accounts.length === 0) return Promise.resolve(undefined);
+
+                    firstRound = createCoinjoinRound(
+                        outpoints.map(outpoint => createInput('account-A', outpoint)),
+                        {
+                            ...options,
+                            prison,
+                            round: {
+                                phase: RoundPhase.OutputRegistration,
+                                coinjoinState: {
+                                    Type: '',
+                                    Events: [
+                                        ROUND_CREATION_EVENT,
+                                        ...outpoints.map(outpoint =>
+                                            createInputAddedEvent(outpoint.toUpperCase()),
+                                        ),
+                                    ],
+                                },
+                            },
+                        },
+                    );
+
+                    return Promise.resolve(firstRound);
+                });
+
+            return { createSpy, getFirstRound: () => firstRound };
+        };
+
+        it('stops all accounts once the coordinator lies in a round', async () => {
+            let statusRounds = [DEFAULT_ROUND];
+            const requestedUrls: string[] = [];
+            server?.addListener('test-request', ({ url, resolve }) => {
+                requestedUrls.push(url);
+                if (url.endsWith('/status')) {
+                    resolve({
+                        RoundStates: statusRounds,
+                        CoinJoinFeeRateMedians: FEE_RATE_MEDIANS,
+                    });
+                }
+                resolve();
+            });
+
+            // Fewer inputs than minInputCount of the mock server.
+            const { createSpy, getFirstRound } = mockFirstRound([OWN_OUTPOINT]);
+
+            const cli = new CoinjoinClient(server?.requestOptions);
+            const stopped = createDeferred<SessionPhaseEvent>();
+            cli.on('session-phase', event => {
+                if (event.phase === SessionPhase.CoordinatorMisbehavior) stopped.resolve(event);
+            });
+
+            await cli.enable();
+            cli.registerAccount(createAccount('account-A'));
+            cli.registerAccount(createAccount('account-B'));
+
+            // account-B has no input in the round and stops as well.
+            expect(await stopped.promise).toEqual({
+                phase: SessionPhase.CoordinatorMisbehavior,
+                accountKeys: ['account-A', 'account-B'],
+            });
+            expect(getFirstRound()?.failed).toEqual([
+                expect.objectContaining({ error: expect.any(CoordinatorMisbehaviorError) }),
+            ]);
+            expect(cli.getAccounts()).toEqual([]);
+
+            // A new round in the status gets no account.
+            const callsBeforeNewRound = createSpy.mock.calls.length;
+            const statusChanged = createDeferred();
+            cli.on('status', () => statusChanged.resolve());
+            statusRounds = [
+                DEFAULT_ROUND,
+                createStatusRound({ InputRegistrationTimeout: '0d 0h 2m 0s' }),
+            ];
+            await statusChanged.promise;
+            // onStatusUpdate creates rounds after the status event.
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            const callsAfterNewRound = createSpy.mock.calls.slice(callsBeforeNewRound);
+            expect(callsAfterNewRound).not.toHaveLength(0);
+            callsAfterNewRound.forEach(([{ accounts }]) => expect(accounts).toEqual([]));
+            expect(requestedUrls).not.toContainEqual(
+                expect.stringMatching(/\/input-registration$/),
+            );
+
+            cli.disable();
+            createSpy.mockRestore();
+        });
+
+        it('keeps the accounts when a round fails without a lie', async () => {
+            server?.addListener('test-request', ({ url, resolve }) => {
+                if (url.endsWith('/status')) {
+                    resolve({
+                        RoundStates: [DEFAULT_ROUND],
+                        CoinJoinFeeRateMedians: FEE_RATE_MEDIANS,
+                    });
+                }
+                resolve();
+            });
+
+            // No inputs of other participants, a plain Error (see verifyRoundInputs).
+            const { createSpy, getFirstRound } = mockFirstRound([OWN_OUTPOINT, OTHER_OWN_OUTPOINT]);
+
+            const cli = new CoinjoinClient(server?.requestOptions);
+            const sessionPhases: SessionPhase[] = [];
+            cli.on('session-phase', ({ phase }) => sessionPhases.push(phase));
+            const ended = createDeferred();
+            cli.on('round', ({ round }) => {
+                if (round.phase === RoundPhase.Ended) ended.resolve();
+            });
+
+            await cli.enable();
+            cli.registerAccount(createAccount('account-A'));
+            cli.registerAccount(createAccount('account-B'));
+            await ended.promise;
+
+            const failed = getFirstRound()?.failed ?? [];
+            expect(failed.map(({ error }) => error?.message)).toEqual([
+                expect.stringMatching(/No inputs of other participants/),
+                expect.stringMatching(/No inputs of other participants/),
+            ]);
+            expect(failed.map(({ error }) => error instanceof CoordinatorMisbehaviorError)).toEqual(
+                [false, false],
+            );
+            expect(sessionPhases).not.toContain(SessionPhase.CoordinatorMisbehavior);
+            expect(cli.getAccounts().map(({ accountKey }) => accountKey)).toEqual([
+                'account-A',
+                'account-B',
+            ]);
+
+            cli.disable();
+            createSpy.mockRestore();
         });
     });
 });

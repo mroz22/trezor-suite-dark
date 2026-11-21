@@ -1,18 +1,21 @@
 import { type LogLevel, type Logger, stringifyLogArgs } from '@trezor/logger';
-import { TypedEmitter } from '@trezor/utils';
+import { TypedEmitter, arrayDistinct } from '@trezor/utils';
 
 import { Account } from './Account';
 import { CoinjoinPrison } from './CoinjoinPrison';
 import { CoinjoinRound } from './CoinjoinRound';
 import { Status } from './Status';
 import { type AnalyzeTransactionsResult, analyzeTransactions } from './analyzeTransactions';
+import { CoordinatorMisbehaviorError } from './coordinator';
 import { ROUND_MIN_INPUT_COUNT } from '../constants';
+import { SessionPhase } from '../enums';
 import type {
     CoinjoinClientEvents,
     CoinjoinClientSettings,
     CoinjoinResponseEvent,
     CoinjoinStatusEvent,
     RegisterAccountParams,
+    SerializedCoinjoinRound,
 } from '../types';
 import { redacted } from '../utils/redacted';
 import { getCoinjoinNetwork } from '../utils/settingsUtils';
@@ -168,6 +171,23 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
         this.emit('session-phase', event);
     }
 
+    // As WalletWasabi CoinJoinManager stops mixing on CoordinatorLiedAboutInputs, stop all
+    // accounts once the coordinator provably lied, instead of retrying with it after the inputs
+    // leave the prison. The accounts share the coordinator and join its rounds together. They may
+    // be registered again. The event names the accounts of the round as well, also when they are
+    // no longer registered, so that the wallet always learns which coordinator lied.
+    private stopAccountsOnCoordinatorMisbehavior(round: SerializedCoinjoinRound) {
+        const registeredAccountKeys = this.accounts.map(({ accountKey }) => accountKey);
+        const accountKeys = registeredAccountKeys
+            .concat(round.inputs.concat(round.failed).map(({ accountKey }) => accountKey))
+            .filter(arrayDistinct);
+
+        this.logger.warn(`Stopping all accounts. Coordinator misbehaved in round ~~${round.id}~~`);
+        registeredAccountKeys.forEach(accountKey => this.unregisterAccount(accountKey));
+        // Not through setSessionPhase, Status is idle without accounts.
+        this.emit('session-phase', { phase: SessionPhase.CoordinatorMisbehavior, accountKeys });
+    }
+
     private async onStatusUpdate({
         changed,
         rounds,
@@ -234,6 +254,13 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
                         // set Status mode
                         if (this.rounds.length === 0) {
                             this.status.setMode(this.accounts.length > 0 ? 'enabled' : 'idle');
+                        }
+                        if (
+                            newRound.failed.some(
+                                ({ error }) => error instanceof CoordinatorMisbehaviorError,
+                            )
+                        ) {
+                            this.stopAccountsOnCoordinatorMisbehavior(round);
                         }
                         // try to create new round immediately if previous didn't fail
                         if (round.failed.length === 0) {

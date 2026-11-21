@@ -10212,6 +10212,13 @@ export const messages = defineMessages({
         defaultMessage: 'Coins not ready. Wait to try again.',
         description: 'Some of utxos are temporary banned, disable session for a while',
     },
+    TR_SESSION_ERROR_PHASE_COORDINATOR_MISBEHAVIOR: {
+        id: 'TR_SESSION_ERROR_PHASE_COORDINATOR_MISBEHAVIOR',
+        defaultMessage:
+            'Coinjoin stopped: the coordinator broke the protocol and may be malicious.',
+        description:
+            'Shown when the coinjoin coordinator sent contradicting data. Coinjoin of all accounts stopped, the user may start it again.',
+    },
     TR_SESSION_PHASE_AWAITING_CONFIRMATION: {
         id: 'TR_SESSION_PHASE_AWAITING_CONFIRMATION',
         defaultMessage: 'Confirming availability',

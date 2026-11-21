@@ -281,6 +281,50 @@ export const pauseCoinjoinSessionThunk =
         dispatch(coinjoinSessionPause(accountKey));
     };
 
+type GetDeviceToCancelCoinjoinAuthorizationState = AccountsRootState &
+    CoinjoinRootState &
+    DeviceRootState;
+
+// cancelCoinjoinAuthorization should be called only if there is no other registered coinjoin account
+const getDeviceToCancelCoinjoinAuthorization = (
+    state: GetDeviceToCancelCoinjoinAuthorizationState,
+    account: Account,
+) => {
+    const devices = selectDevices(state);
+    const accounts = selectAccounts(state);
+    const coinjoinAccounts = selectCoinjoinAccounts(state);
+    const device = devices.find(d => d.state?.staticSessionId === account.deviceState);
+    let shouldCancelAuthorization = device?.connected;
+    if (device) {
+        // find all instances of this physical device
+        const deviceInstances = getDeviceInstances(device, devices);
+        // find other coinjoin accounts related to this physical device
+        const otherAccounts = deviceInstances.flatMap(d =>
+            accounts.filter(
+                a =>
+                    a.accountType === 'coinjoin' &&
+                    a.key !== account.key &&
+                    a.deviceState === d.state?.staticSessionId,
+            ),
+        );
+        // find coinjoin account with session
+        const otherRegisteredAccounts = otherAccounts.flatMap(a =>
+            coinjoinAccounts.filter(cja => cja.key === a.key && cja.session),
+        );
+        if (otherRegisteredAccounts.length > 0) {
+            shouldCancelAuthorization = false;
+        }
+    }
+
+    return shouldCancelAuthorization ? device : undefined;
+};
+
+const cancelCoinjoinAuthorizationErrorToast = (message: string) =>
+    notificationsActions.addToast({
+        type: 'error',
+        error: `Cancel coinjoin authorization ${message}`,
+    });
+
 type StopCoinjoinSessionThunkState = AccountsRootState & CoinjoinRootState & DeviceRootState;
 
 // called from coinjoin account UI or exceptions like device disconnection, forget wallet/account etc.
@@ -298,48 +342,76 @@ export const stopCoinjoinSessionThunk =
         // unregister account in @trezor/coinjoin
         client?.unregisterAccount(account.key);
 
-        // cancelCoinjoinAuthorization should be called only if there is no other registered coinjoin account
-        const devices = selectDevices(getState());
-        const accounts = selectAccounts(getState());
-        const coinjoinAccounts = selectCoinjoinAccounts(getState());
-        const device = devices.find(d => d.state?.staticSessionId === account.deviceState);
-        let shouldCancelAuthorization = device?.connected;
+        const device = getDeviceToCancelCoinjoinAuthorization(getState(), account);
         if (device) {
-            // find all instances of this physical device
-            const deviceInstances = getDeviceInstances(device, devices);
-            // find other coinjoin accounts related to this physical device
-            const otherAccounts = deviceInstances.flatMap(d =>
-                accounts.filter(
-                    a =>
-                        a.accountType === 'coinjoin' &&
-                        a.key !== accountKey &&
-                        a.deviceState === d.state?.staticSessionId,
-                ),
-            );
-            // find coinjoin account with session
-            const otherRegisteredAccounts = otherAccounts.flatMap(a =>
-                coinjoinAccounts.filter(cja => cja.key === a.key && cja.session),
-            );
-            if (otherRegisteredAccounts.length > 0) {
-                shouldCancelAuthorization = false;
-            }
-        }
-
-        if (shouldCancelAuthorization) {
             const result = await TrezorConnect.cancelCoinjoinAuthorization({ device });
 
             if (!result.success) {
-                dispatch(
-                    notificationsActions.addToast({
-                        type: 'error',
-                        error: `Cancel coinjoin authorization ${result.error.message}`,
-                    }),
-                );
+                dispatch(cancelCoinjoinAuthorizationErrorToast(result.error.message));
             }
         }
 
         // dispatch data to reducer
         dispatch(coinjoinAccountUnregister(accountKey));
+    };
+
+type StopCoinjoinSessionsOnCoordinatorMisbehaviorThunkState = AccountsRootState &
+    CoinjoinRootState &
+    DeviceRootState &
+    ModalRootState;
+
+// The client unregistered its accounts, its coordinator provably lied. End the sessions of all
+// accounts of its network, paused and restoring ones too: a paused session would be restored
+// automatically (e.g. when its account syncs) and rejoin the coordinator. The sessions end before
+// onCoinjoinRoundChangedThunk handles the end of the round, so it skips them and only this thunk
+// uses the devices. It ends the round on them as onCoinjoinRoundChangedThunk does before
+// autostop, then cancels the authorizations as stopCoinjoinSessionThunk does.
+export const stopCoinjoinSessionsOnCoordinatorMisbehaviorThunk =
+    (accountKeys: string[]) =>
+    async (
+        dispatch: Dispatch,
+        getState: () => StopCoinjoinSessionsOnCoordinatorMisbehaviorThunkState,
+    ) => {
+        const accounts = selectAccounts(getState());
+        const coinjoinAccounts = selectCoinjoinAccounts(getState());
+        const symbols = accounts.flatMap(({ key, symbol }) =>
+            accountKeys.includes(key) ? symbol : [],
+        );
+        const accountsWithSession = accounts.filter(
+            ({ key, symbol }) =>
+                symbols.includes(symbol) &&
+                coinjoinAccounts.some(account => account.key === key && account.session),
+        );
+
+        accountsWithSession.forEach(({ key }) => dispatch(coinjoinAccountUnregister(key)));
+        dispatch(
+            notificationsActions.addToast({
+                type: 'coinjoin-coordinator-misbehavior',
+                autoClose: false,
+            }),
+        );
+
+        if (accountsWithSession.length === 0) return;
+
+        await dispatch(setBusyScreenThunk(accountsWithSession.map(({ key }) => key)));
+        dispatch(closeCriticalPhaseModal());
+
+        // Once per physical device, stopCoinjoinSessionThunk cancels it with its last session.
+        const devicesToCancel = arrayToDictionary(
+            accountsWithSession.flatMap(
+                account => getDeviceToCancelCoinjoinAuthorization(getState(), account) ?? [],
+            ),
+            ({ id }) => id,
+        );
+        await promiseAllSequence(
+            Object.values(devicesToCancel).map(device => async () => {
+                const result = await TrezorConnect.cancelCoinjoinAuthorization({ device });
+
+                if (!result.success) {
+                    dispatch(cancelCoinjoinAuthorizationErrorToast(result.error.message));
+                }
+            }),
+        );
     };
 
 type OnCoinjoinRoundChangedThunkState = AccountsRootState & CoinjoinRootState;
