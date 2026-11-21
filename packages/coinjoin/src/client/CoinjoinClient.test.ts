@@ -9,9 +9,9 @@ import { createInput } from '../__fixtures__/input.fixture';
 import {
     DEFAULT_ROUND,
     FEE_RATE_MEDIANS,
-    ROUND_CREATION_EVENT,
     createCoinjoinRound,
     createInputAddedEvent,
+    createStatusRound,
     createTransactionData,
 } from '../__fixtures__/round.fixture';
 import { EndRoundState, RoundPhase, SessionPhase } from '../enums';
@@ -314,9 +314,81 @@ describe(`CoinjoinClient`, () => {
         },
     );
 
+    it('leaves a joined round whose status stops matching its id in the same phase', async () => {
+        const outpoint = `${'a'.repeat(64)}00000000`;
+        let statusRounds = [DEFAULT_ROUND];
+        const registrationRequested = createDeferred();
+        server?.addListener('test-request', ({ url, resolve }) => {
+            if (url.endsWith('/status')) {
+                resolve({ RoundStates: statusRounds, CoinJoinFeeRateMedians: FEE_RATE_MEDIANS });
+            } else if (url.endsWith('/input-registration')) {
+                // No response, the registration runs until the client leaves the round.
+                registrationRequested.resolve();
+            } else {
+                resolve();
+            }
+        });
+
+        // The client joins the round with an input which has its ownership proof.
+        let joinedRound: CoinjoinRound | undefined;
+        const createSpy = jest
+            .spyOn(CoinjoinRound, 'create')
+            .mockImplementation(({ accounts, prison, options }) => {
+                if (joinedRound || accounts.length === 0) return Promise.resolve(undefined);
+
+                joinedRound = createCoinjoinRound(
+                    [createInput('account-A', outpoint, { ownershipProof: '01A1' })],
+                    { ...options, prison },
+                );
+
+                return Promise.resolve(joinedRound);
+            });
+
+        const cli = new CoinjoinClient(server?.requestOptions);
+        const ended = createDeferred<SerializedCoinjoinRound>();
+        cli.on('round', ({ round }) => {
+            if (round.phase === RoundPhase.Ended) ended.resolve(round);
+        });
+
+        await cli.enable();
+        cli.registerAccount({
+            accountKey: 'account-A',
+            scriptType: 'Taproot',
+            utxos: [],
+            changeAddresses: [],
+            targetAnonymity: 10,
+            rawLiquidityClue: 0,
+            maxFeePerKvbyte: 1,
+            maxCoordinatorFeeRate: 1,
+            maxRounds: 10,
+        });
+        await registrationRequested.promise;
+
+        // Other credential issuer keys under the same id, still in input registration.
+        statusRounds = [
+            {
+                ...DEFAULT_ROUND,
+                AmountCredentialIssuerParameters: DEFAULT_ROUND.VsizeCredentialIssuerParameters,
+            },
+        ];
+
+        const endedRound = await ended.promise;
+        cli.disable();
+        createSpy.mockRestore();
+
+        // The input fails with the lie, not with the aborted registration.
+        expect(endedRound).toMatchObject({
+            id: DEFAULT_ROUND.Id,
+            endRoundState: EndRoundState.None,
+            inputs: [],
+            failed: [{ outpoint, error: 'Round parameters do not match the round id' }],
+        });
+        expect(joinedRound?.prison.isDetained(outpoint)).toMatchObject({
+            roundId: DEFAULT_ROUND.Id,
+        });
+    });
+
     describe('blame round', () => {
-        const FAILED_ROUND_ID = '1'.repeat(64);
-        const BLAME_ROUND_ID = '2'.repeat(64);
         const OWN_UTXO = {
             path: "m/10025'/1'/0'/1'/0/0",
             outpoint: `${'d'.repeat(64)}00000000`,
@@ -346,18 +418,8 @@ describe(`CoinjoinClient`, () => {
             OwnershipProof: 'not-relevant',
         };
 
-        // Inputs confirm their connection every half of the timeout, keep the test short.
-        const BLAME_ROUND_CREATION_EVENT = {
-            ...ROUND_CREATION_EVENT,
-            RoundParameters: {
-                ...ROUND_CREATION_EVENT.RoundParameters,
-                ConnectionConfirmationTimeout: '0d 0h 0m 1s',
-            },
-        };
-
         const FAILED_ROUND: Round = {
             ...DEFAULT_ROUND,
-            Id: FAILED_ROUND_ID,
             Phase: RoundPhase.TransactionSigning,
         };
         const ENDED_FAILED_ROUND: Round = {
@@ -371,14 +433,20 @@ describe(`CoinjoinClient`, () => {
         // requested urls and the last state of the blame round once it registers its outputs or
         // fails.
         const runBlameRound = async (otherOutpoints: string[]) => {
-            const InputRegistrationEnd = new Date(Date.now() + 120000).toUTCString();
+            // Its input registration ends in 2 minutes. Inputs confirm their connection every half
+            // of the timeout, keep the test short.
+            const blameStatusRound = createStatusRound({
+                BlameOf: FAILED_ROUND.Id,
+                InputRegistrationStart: new Date(Date.now() + 60000).toISOString(),
+                RoundParameters: { ConnectionConfirmationTimeout: '0d 0h 0m 1s' },
+            });
             const createBlameRound = (Phase: RoundPhase, Events: CoinjoinStateEvent[] = []) => ({
-                ...DEFAULT_ROUND,
-                Id: BLAME_ROUND_ID,
-                BlameOf: FAILED_ROUND_ID,
+                ...blameStatusRound,
                 Phase,
-                InputRegistrationEnd,
-                CoinjoinState: { Type: '', Events: [BLAME_ROUND_CREATION_EVENT, ...Events] },
+                CoinjoinState: {
+                    ...blameStatusRound.CoinjoinState,
+                    Events: [...blameStatusRound.CoinjoinState.Events, ...Events],
+                },
             });
 
             let statusRounds = [FAILED_ROUND];
@@ -449,7 +517,7 @@ describe(`CoinjoinClient`, () => {
             const cli = new CoinjoinClient(server?.requestOptions);
             let blameRound: SerializedCoinjoinRound | undefined;
             cli.on('round', ({ round }) => {
-                if (round.id !== BLAME_ROUND_ID) return;
+                if (round.id !== blameStatusRound.Id) return;
 
                 blameRound = round;
                 if (round.phase === RoundPhase.Ended) outputRegistrationDone.resolve();

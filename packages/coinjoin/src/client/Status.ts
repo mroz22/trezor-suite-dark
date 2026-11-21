@@ -8,6 +8,7 @@ import { RoundPhase } from '../enums';
 import { type CoinjoinClientSettings, type CoinjoinStatusEvent, type LogEvent } from '../types';
 import { type Round } from '../types/coordinator';
 import { patchResponse } from '../utils/http';
+import { isRoundIdMatching } from '../utils/roundHasher';
 import { transformStatus } from '../utils/roundUtils';
 
 type StatusMode = keyof typeof STATUS_TIMEOUT;
@@ -75,7 +76,12 @@ export class Status extends TypedEmitter<StatusEvents> {
                     return true;
                 }
 
-                return false;
+                // A followed round whose status no longer matches its id, also without a phase
+                // change. CoinjoinRound.onPhaseChange leaves it.
+                return (
+                    this.registeredRound.some(({ id }) => id === nextRound.Id) &&
+                    !isRoundIdMatching(nextRound, this.settings.coordinatorName)
+                );
             })
             .concat(
                 // end known rounds which are missing in /status
@@ -167,7 +173,7 @@ export class Status extends TypedEmitter<StatusEvents> {
             const statusEvent = {
                 changed,
                 prevStatusTimestamp,
-                ...transformStatus(status),
+                ...transformStatus(status, this.settings.coordinatorName),
             };
 
             this.emit('update', statusEvent);

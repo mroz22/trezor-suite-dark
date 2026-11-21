@@ -5,6 +5,7 @@ import {
     DEFAULT_ROUND,
     ROUND_CREATION_EVENT,
     createCoinjoinRound,
+    createStatusRound,
 } from '../../__fixtures__/round.fixture';
 import { ROUND_SELECTION_MAX_OUTPUTS } from '../../constants';
 import { SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
@@ -95,46 +96,154 @@ describe('selectRound', () => {
         expect(result[0]).toBe(cjRound);
     });
 
-    const createStatusRound = (
-        Id: string,
+    // Status round with the given parameters. Rounds with other numbers start at other times, so
+    // they have other ids.
+    const createNumberedRound = (
+        roundNumber: number,
         RoundParameters: Partial<CoinjoinRoundParameters>,
         BlameOf = DEFAULT_ROUND.BlameOf,
-    ): Round => ({
-        ...DEFAULT_ROUND,
-        Id,
-        BlameOf,
-        CoinjoinState: {
-            Type: '',
-            Events: [
-                {
-                    ...ROUND_CREATION_EVENT,
-                    RoundParameters: {
-                        ...ROUND_CREATION_EVENT.RoundParameters,
-                        ...RoundParameters,
-                    },
-                },
-            ],
-        },
+    ): Round =>
+        createStatusRound({
+            BlameOf,
+            InputRegistrationStart: new Date(
+                Date.parse(DEFAULT_ROUND.InputRegistrationStart) + roundNumber,
+            ).toISOString(),
+            RoundParameters,
+        });
+
+    describe('rounds whose id does not match their parameters', () => {
+        // The coordinator serves other credential issuer keys under the id of a round.
+        const withOtherIssuerKeys = (round: Round): Round => ({
+            ...round,
+            AmountCredentialIssuerParameters: DEFAULT_ROUND.VsizeCredentialIssuerParameters,
+        });
+
+        it('skips them before a CoinjoinRound is created and logs each once', () => {
+            const logger = { ...noopLogger, warn: jest.fn() };
+            const generator = jest.fn(roundGenerator);
+            const matchingRound = createNumberedRound(61, {});
+            const otherIssuerKeysRound = withOtherIssuerKeys(createNumberedRound(62, {}));
+            const otherParametersRound = {
+                ...createNumberedRound(63, { MaxAmountCredentialValue: 1000000 }),
+                Id: createNumberedRound(63, {}).Id,
+            };
+            const otherCoordinatorRound = createNumberedRound(64, {
+                CoordinationIdentifier: 'OtherCoordinatorIdentifier',
+            });
+            const params = {
+                roundGenerator: generator,
+                prison,
+                statusRounds: [
+                    otherIssuerKeysRound,
+                    matchingRound,
+                    otherParametersRound,
+                    otherCoordinatorRound,
+                ],
+                coinjoinRounds: [],
+                options: { ...server?.requestOptions, logger },
+            };
+
+            expect(getRoundCandidates(params).map(({ id }) => id)).toEqual([matchingRound.Id]);
+            expect(getRoundCandidates(params).map(({ id }) => id)).toEqual([matchingRound.Id]);
+
+            expect(generator.mock.calls.map(([round]) => round.Id)).toEqual([
+                matchingRound.Id,
+                matchingRound.Id,
+            ]);
+            expect(logger.warn).toHaveBeenCalledTimes(3);
+            [otherIssuerKeysRound, otherParametersRound, otherCoordinatorRound].forEach(round =>
+                expect(logger.warn).toHaveBeenCalledWith(
+                    `Skipping round ~~${round.Id}~~. Its id does not match its parameters and coordinator`,
+                ),
+            );
+        });
+
+        it('does not keep a joined round whose status no longer matches its id', () => {
+            const logger = { ...noopLogger, warn: jest.fn() };
+            const statusRound = createNumberedRound(65, {});
+            const joinedRound = new CoinjoinRound(statusRound, prison, server?.requestOptions);
+
+            const result = getRoundCandidates({
+                roundGenerator,
+                prison,
+                statusRounds: [withOtherIssuerKeys(statusRound)],
+                coinjoinRounds: [joinedRound],
+                options: { ...server?.requestOptions, logger },
+            });
+
+            expect(result).toEqual([]);
+            // The client leaves the round, it does not skip it.
+            expect(logger.warn).not.toHaveBeenCalled();
+        });
+
+        it('releases inputs waiting for a skipped blame round', () => {
+            const blameOf = '6'.repeat(64);
+            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf, [
+                'AA',
+            ]);
+
+            const result = getRoundCandidates({
+                roundGenerator,
+                prison,
+                statusRounds: [withOtherIssuerKeys(createNumberedRound(66, {}, blameOf))],
+                coinjoinRounds: [],
+                options: server?.requestOptions,
+            });
+
+            expect(result).toEqual([]);
+            expect(prison.getBlameOfInmates()).toEqual([]);
+        });
+    });
+
+    it('takes the end of the input registration from its start and timeout', () => {
+        const minute = 60000;
+        // InputRegistrationEnd is not part of the round id, as in WalletWasabi it is not read.
+        const createRoundEndingIn = (endsIn: number, InputRegistrationEnd: string) => ({
+            ...createStatusRound({
+                InputRegistrationStart: new Date(Date.now() + endsIn - minute).toISOString(),
+            }),
+            InputRegistrationEnd,
+        });
+        const endingRound = createRoundEndingIn(
+            10000,
+            new Date(Date.now() + 10 * minute).toISOString(),
+        );
+        const openRound = createRoundEndingIn(10 * minute, new Date(Date.now()).toISOString());
+
+        const result = getRoundCandidates({
+            roundGenerator,
+            prison,
+            statusRounds: [endingRound, openRound],
+            coinjoinRounds: [],
+            options: server?.requestOptions,
+        });
+
+        expect(result.map(({ id }) => id)).toEqual([openRound.Id]);
+        expect(result[0]?.inputRegistrationEnd).toEqual(
+            new Date(Date.parse(openRound.InputRegistrationStart) + minute).toISOString(),
+        );
     });
 
     describe('rounds with MinInputCountByRound below minInputCount', () => {
         const blameOf = '1'.repeat(64);
 
         it('skips regular and blame rounds', () => {
+            const joinedRound = createNumberedRound(2, { MinInputCountByRound: 21 });
+            const joinedBlameRound = createNumberedRound(4, { MinInputCountByRound: 21 }, blameOf);
             const result = getRoundCandidates({
                 roundGenerator,
                 prison,
                 statusRounds: [
-                    createStatusRound('01', { MinInputCountByRound: 20 }),
-                    createStatusRound('02', { MinInputCountByRound: 21 }),
-                    createStatusRound('03', { MinInputCountByRound: 20 }, blameOf),
-                    createStatusRound('04', { MinInputCountByRound: 21 }, blameOf),
+                    createNumberedRound(1, { MinInputCountByRound: 20 }),
+                    joinedRound,
+                    createNumberedRound(3, { MinInputCountByRound: 20 }, blameOf),
+                    joinedBlameRound,
                 ],
                 coinjoinRounds: [],
                 options: { ...server?.requestOptions, minInputCount: 21 },
             });
 
-            expect(result.map(({ id }) => id)).toEqual(['02', '04']);
+            expect(result.map(({ id }) => id)).toEqual([joinedRound.Id, joinedBlameRound.Id]);
         });
 
         it('releases inputs waiting for a skipped blame round', () => {
@@ -159,7 +268,7 @@ describe('selectRound', () => {
             expect(
                 getRoundCandidates({
                     ...params,
-                    statusRounds: [createStatusRound('11', { MinInputCountByRound: 1 })],
+                    statusRounds: [createNumberedRound(11, { MinInputCountByRound: 1 })],
                 }),
             ).toEqual([]);
             expect(prison.getBlameOfInmates()).toHaveLength(2);
@@ -167,7 +276,7 @@ describe('selectRound', () => {
             expect(
                 getRoundCandidates({
                     ...params,
-                    statusRounds: [createStatusRound('12', { MinInputCountByRound: 1 }, blameOf)],
+                    statusRounds: [createNumberedRound(12, { MinInputCountByRound: 1 }, blameOf)],
                 }),
             ).toEqual([]);
             expect(prison.getBlameOfInmates()).toEqual([
@@ -177,10 +286,11 @@ describe('selectRound', () => {
 
         it('logs a skipped round once', () => {
             const logger = { ...noopLogger, info: jest.fn() };
+            const statusRound = createNumberedRound(21, { MinInputCountByRound: 1 });
             const params = {
                 roundGenerator,
                 prison,
-                statusRounds: [createStatusRound('21', { MinInputCountByRound: 1 })],
+                statusRounds: [statusRound],
                 coinjoinRounds: [],
                 options: { ...server?.requestOptions, logger },
             };
@@ -190,7 +300,7 @@ describe('selectRound', () => {
 
             expect(logger.info).toHaveBeenCalledTimes(1);
             expect(logger.info).toHaveBeenCalledWith(
-                'Skipping round ~~21~~. Min input count 1 is below 2',
+                `Skipping round ~~${statusRound.Id}~~. Min input count 1 is below 2`,
             );
         });
     });
@@ -215,20 +325,22 @@ describe('selectRound', () => {
                 ['BA'],
             );
 
+            const joinedRound = createNumberedRound(31, withMinOutputAmount(9999));
+            const joinedBlameRound = createNumberedRound(33, withMinOutputAmount(9999), blameOf);
             const result = getRoundCandidates({
                 roundGenerator,
                 prison,
                 statusRounds: [
-                    createStatusRound('31', withMinOutputAmount(9999)),
-                    createStatusRound('32', withMinOutputAmount(10000)),
-                    createStatusRound('33', withMinOutputAmount(9999), blameOf),
-                    createStatusRound('34', withMinOutputAmount(10000), skippedBlameOf),
+                    joinedRound,
+                    createNumberedRound(32, withMinOutputAmount(10000)),
+                    joinedBlameRound,
+                    createNumberedRound(34, withMinOutputAmount(10000), skippedBlameOf),
                 ],
                 coinjoinRounds: [],
                 options: server?.requestOptions,
             });
 
-            expect(result.map(({ id }) => id)).toEqual(['31', '33']);
+            expect(result.map(({ id }) => id)).toEqual([joinedRound.Id, joinedBlameRound.Id]);
             expect(prison.getBlameOfInmates()).toEqual([
                 expect.objectContaining({ id: 'AA', roundId: blameOf }),
             ]);
@@ -260,7 +372,7 @@ describe('selectRound', () => {
                 roundGenerator,
                 aliceGenerator,
                 accounts: [account],
-                statusRounds: [createStatusRound('51', roundParameters, blameOf)],
+                statusRounds: [createNumberedRound(51, roundParameters, blameOf)],
                 coinjoinRounds: [],
                 prison,
                 options: server?.requestOptions,
@@ -271,6 +383,7 @@ describe('selectRound', () => {
         });
 
         it('joins the round with inputs of the accounts within their limits', async () => {
+            const blameRound = createNumberedRound(52, {}, blameOf);
             prison.detainForBlameRound(
                 [
                     { accountKey: 'account-A', outpoint: 'AA' },
@@ -291,13 +404,17 @@ describe('selectRound', () => {
                         utxos: [{ outpoint: 'BA', amount: 5000, anonymityLevel: 1 }],
                     },
                 ],
-                statusRounds: [createStatusRound('52', {}, blameOf)],
+                statusRounds: [blameRound],
                 coinjoinRounds: [],
                 prison,
                 options: server?.requestOptions,
             });
 
-            expect(result).toMatchObject({ id: '52', blameOf, inputs: [{ outpoint: 'BA' }] });
+            expect(result).toMatchObject({
+                id: blameRound.Id,
+                blameOf,
+                inputs: [{ outpoint: 'BA' }],
+            });
         });
     });
 
@@ -642,25 +759,17 @@ describe('selectRound', () => {
             resolve();
         });
 
-        const roundWithMiningFee = (MiningFeeRate: number) => ({
-            ...DEFAULT_ROUND,
-            CoinjoinState: {
-                Type: '',
-                Events: [
-                    {
-                        ...ROUND_CREATION_EVENT,
-                        RoundParameters: {
-                            ...ROUND_CREATION_EVENT.RoundParameters,
-                            MiningFeeRate,
-                            AllowedOutputAmounts: {
-                                Min: 1000, // custom min allowed output amount
-                                Max: 1000000000,
-                            },
-                        },
+        const roundWithMiningFee = (MiningFeeRate: number) =>
+            createStatusRound({
+                RoundParameters: {
+                    MiningFeeRate,
+                    AllowedOutputAmounts: {
+                        Min: 1000, // custom min allowed output amount
+                        Max: 1000000000,
                     },
-                ],
-            },
-        });
+                },
+            });
+        const roundWithMostUtxos = roundWithMiningFee(1);
 
         const result = await selectRound({
             roundGenerator,
@@ -686,20 +795,7 @@ describe('selectRound', () => {
                     utxos: [{ outpoint: 'CA', amount: 2000, anonymityLevel: 1 }], // this will be picked by all rounds
                 },
             ],
-            statusRounds: [
-                {
-                    ...roundWithMiningFee(20),
-                    Id: '01',
-                },
-                {
-                    ...roundWithMiningFee(1),
-                    Id: '02',
-                },
-                {
-                    ...roundWithMiningFee(10),
-                    Id: '03',
-                },
-            ],
+            statusRounds: [roundWithMiningFee(20), roundWithMostUtxos, roundWithMiningFee(10)],
             coinjoinRounds: [],
             prison,
             options: server?.requestOptions,
@@ -715,7 +811,7 @@ describe('selectRound', () => {
         });
 
         expect(result).toMatchObject({
-            id: '02', // this round contains most utxo candidates
+            id: roundWithMostUtxos.Id, // this round contains most utxo candidates
             phase: 0,
             roundParameters: { MiningFeeRate: 1 },
             commitmentData: expect.any(String),
@@ -744,6 +840,11 @@ describe('selectRound', () => {
             signedOutpoints,
         );
 
+        // A blame round has its own input registration timeout, and so its own id.
+        const blameRound = createStatusRound({
+            BlameOf: blameOf,
+            InputRegistrationTimeout: '0d 0h 1m 1s',
+        });
         const result = await selectRound({
             roundGenerator,
             aliceGenerator,
@@ -758,10 +859,7 @@ describe('selectRound', () => {
                     ],
                 },
             ],
-            statusRounds: [
-                { ...DEFAULT_ROUND, Id: '01' },
-                { ...DEFAULT_ROUND, Id: '02', BlameOf: blameOf },
-            ],
+            statusRounds: [DEFAULT_ROUND, blameRound],
             coinjoinRounds: [],
             prison,
             options: server?.requestOptions,
@@ -770,7 +868,7 @@ describe('selectRound', () => {
         expect(spy).toHaveBeenCalledTimes(0); // middleware was not called, detained inputs were used
         expect(result?.inputs.length).toBe(2);
         expect(result).toMatchObject({
-            id: '02',
+            id: blameRound.Id,
             blameOf,
             inputs: [{ outpoint: 'AA' }, { outpoint: 'AB' }],
             blameOfOutpoints: signedOutpoints, // the failed round may leave the status
@@ -802,7 +900,7 @@ describe('selectRound', () => {
                     utxos: [{ outpoint: 'AA', amount: 5000, anonymityLevel: 1 }],
                 },
             ],
-            statusRounds: [{ ...DEFAULT_ROUND, Id: '02', BlameOf: blameOf }],
+            statusRounds: [{ ...DEFAULT_ROUND, BlameOf: blameOf }],
             coinjoinRounds: [],
             prison: restoredPrison,
             options: server?.requestOptions,

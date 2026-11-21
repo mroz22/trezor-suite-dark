@@ -200,6 +200,36 @@ describe('Status', () => {
         expect(onUpdate).toHaveBeenCalledTimes(2);
     });
 
+    it('reports a followed round whose status stops matching its id in the same phase', async () => {
+        // Other credential issuer keys under the same id.
+        const otherIssuerKeysRound = {
+            ...DEFAULT_ROUND,
+            AmountCredentialIssuerParameters: DEFAULT_ROUND.VsizeCredentialIssuerParameters,
+        };
+        let roundStates = [DEFAULT_ROUND];
+        (coordinatorRequest as jest.Mock).mockImplementation(() =>
+            Promise.resolve({ ...STATUS_EVENT, RoundStates: roundStates }),
+        );
+
+        status = new Status(server?.requestOptions);
+        const onUpdate = jest.fn();
+        status.on('update', onUpdate);
+        await status.start();
+        expect(onUpdate).toHaveBeenCalledTimes(1);
+
+        // Not followed, getRoundCandidates skips it.
+        roundStates = [otherIssuerKeysRound];
+        await status.getStatus();
+        expect(onUpdate).toHaveBeenCalledTimes(1);
+
+        status.startFollowRound(createCoinjoinRound([], server?.requestOptions));
+        await status.getStatus();
+        expect(onUpdate).toHaveBeenCalledTimes(2);
+        expect(onUpdate).toHaveBeenLastCalledWith(
+            expect.objectContaining({ changed: [otherIssuerKeysRound] }),
+        );
+    });
+
     it('Status identities', async () => {
         const identities: string[] = [];
         (coordinatorRequest as jest.Mock).mockImplementation((url, _b, options) => {
@@ -338,8 +368,9 @@ describe('Status', () => {
     it('Status onStatusChange with error in processStatus', async () => {
         server?.addListener('test-request', ({ url, resolve }) => {
             if (url.endsWith('/status')) {
+                // No CoinJoinFeeRateMedians. A malformed round alone does not fail the processing,
+                // only rounds whose id matches their parameters are read.
                 resolve({
-                    ...STATUS_EVENT,
                     RoundStates: [{}],
                 });
             }
@@ -360,7 +391,7 @@ describe('Status', () => {
         expect(onExceptionListener).toHaveBeenCalledTimes(1);
         expect(onExceptionListener).toHaveBeenCalledWith({
             level: 'error',
-            payload: expect.any(String), // Cannot read properties of undefined (reading 'events')
+            payload: expect.any(String), // Cannot read properties of undefined (reading '0')
         });
     });
 
@@ -442,10 +473,10 @@ describe('Status', () => {
                 });
             }
             if (statusCall === 2) {
-                // signing observed, but transformStatus throws (no CoinjoinState) -> not committed
+                // signing observed, but transformStatus throws (no CoinJoinFeeRateMedians) -> not
+                // committed
                 return Promise.resolve({
-                    ...STATUS_EVENT,
-                    RoundStates: [{ ...DEFAULT_ROUND, Phase: 3, CoinjoinState: undefined }],
+                    RoundStates: [{ ...DEFAULT_ROUND, Phase: 3 }],
                 });
             }
 

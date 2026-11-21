@@ -1,6 +1,7 @@
 import { loggerMock } from '@trezor/logger/mocks';
 import * as trezorUtils from '@trezor/utils';
 
+import { CoordinatorMisbehaviorError } from './coordinator';
 import { createServer } from '../../mocks/server';
 import { createInput } from '../__fixtures__/input.fixture';
 import {
@@ -10,6 +11,7 @@ import {
     createInputAddedEvent,
 } from '../__fixtures__/round.fixture';
 import * as CONSTANTS from '../constants';
+import { EndRoundState, RoundPhase, WabiSabiProtocolErrorCode } from '../enums';
 
 // mock random delay function
 jest.mock('@trezor/utils', () => {
@@ -72,6 +74,81 @@ describe(`CoinjoinRound`, () => {
         // bound); the assignment lives inside the `this.phase !== changed.Phase` guard on purpose
         await round.onPhaseChange({ ...DEFAULT_ROUND, Phase: 3 }, 90000);
         expect(round.phaseStartLowerBound).toBe(70000);
+    });
+
+    it('leaves the round when its status no longer matches the round id', async () => {
+        const requestSpy = jest.fn();
+        server?.addListener('test-request', ({ url, resolve }) => {
+            requestSpy(url);
+            resolve();
+        });
+
+        const outpoint = 'a10000000000000000000000000000000000000000000000000000000000000001000000';
+        const address = {
+            accountKey: 'account-A',
+            address: 'tb1p-registered',
+            path: '',
+            scriptPubKey: '',
+            amount: 1,
+        };
+        const round = createCoinjoinRound(
+            [
+                createInput('account-A', outpoint, {
+                    ownershipProof: '01A1',
+                    registrationData: { AliceId: '01A1-01a1' },
+                    confirmationData: {},
+                }),
+            ],
+            {
+                ...server?.requestOptions,
+                logger,
+                round: {
+                    phase: RoundPhase.OutputRegistration,
+                    // The end state is not part of the round id, an earlier status may carry any.
+                    endRoundState: EndRoundState.TransactionBroadcasted,
+                    addresses: [address],
+                },
+            },
+        );
+        // As outputRegistration detains a registered address.
+        round.prison.detain(address, {
+            roundId: round.id,
+            errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+        });
+        const endedSpy = jest.fn();
+        round.on('ended', endedSpy);
+
+        // Other credential issuer keys under the same id.
+        await round.onPhaseChange({
+            ...DEFAULT_ROUND,
+            Phase: RoundPhase.TransactionSigning,
+            AmountCredentialIssuerParameters: DEFAULT_ROUND.VsizeCredentialIssuerParameters,
+        });
+
+        expect(round.phase).toBe(RoundPhase.Ended);
+        expect(round.endRoundState).toBe(EndRoundState.None);
+        expect(round.inputs[0]?.error).toBeInstanceOf(CoordinatorMisbehaviorError);
+        expect(logger.error).toHaveBeenCalledWith(
+            expect.stringMatching(/Leaving round .* Its parameters no longer match its id/),
+        );
+
+        await round.process([]);
+
+        expect(round.inputs).toEqual([]);
+        expect(round.failed.map(input => input.outpoint)).toEqual([outpoint]);
+        expect(round.getRequest()).toBeUndefined();
+        expect(endedSpy).toHaveBeenCalledTimes(1);
+        expect(requestSpy).not.toHaveBeenCalled();
+        expect(round.prison.isDetained(outpoint)).toMatchObject({
+            roundId: round.id,
+            reason: 'Round parameters do not match the round id',
+        });
+        // Not detained for good as after a broadcast, the end state of the coordinator is ignored.
+        expect(round.prison.isDetained(address)).toMatchObject({
+            roundId: round.id,
+            sentenceEnd: expect.any(Number),
+        });
+        expect(round.prison.isDetained(address)?.sentenceEnd).not.toBe(Infinity);
     });
 
     it('catch errored Round', async () => {

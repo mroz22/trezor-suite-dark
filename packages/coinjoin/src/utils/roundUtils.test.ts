@@ -13,6 +13,7 @@ import {
     ROUND_CREATION_EVENT,
     STATUS_EVENT,
     STATUS_TRANSFORMED,
+    createStatusRound,
 } from '../__fixtures__/round.fixture';
 import type { CoinjoinRoundParameters } from '../types/coordinator';
 
@@ -47,20 +48,56 @@ describe('roundUtils', () => {
     });
 
     describe('transformStatus', () => {
+        const coordinatorName = 'CoinJoinCoordinatorIdentifier';
+
         it('transform correctly', () => {
-            const status = transformStatus(STATUS_EVENT);
+            const status = transformStatus(STATUS_EVENT, coordinatorName);
 
             expect(status).toEqual(STATUS_TRANSFORMED);
         });
 
         it('without fee rate medians uses mining fee rate of the last round', () => {
-            const status = transformStatus({
-                ...STATUS_EVENT,
-                CoinJoinFeeRateMedians: [],
-                RoundStates: [DEFAULT_ROUND],
-            });
+            const status = transformStatus(
+                {
+                    ...STATUS_EVENT,
+                    CoinJoinFeeRateMedians: [],
+                    RoundStates: [DEFAULT_ROUND],
+                },
+                coordinatorName,
+            );
 
             expect(status.feeRateMedian).toEqual(129);
+        });
+
+        it('reads only rounds whose id matches their parameters', () => {
+            const lastRound = createStatusRound({
+                RoundParameters: {
+                    MiningFeeRate: 3000,
+                    CoordinationFeeRate: { Rate: 0.001, PlebsDontPayThreshold: 0 },
+                    AllowedInputAmounts: { Min: 10000, Max: 100000 },
+                },
+            });
+            const RoundStates = [DEFAULT_ROUND, { ...lastRound, Id: DEFAULT_ROUND.Id }];
+
+            expect(
+                transformStatus({ CoinJoinFeeRateMedians: [], RoundStates }, coordinatorName),
+            ).toEqual({ ...STATUS_TRANSFORMED, rounds: RoundStates });
+            expect(
+                transformStatus(
+                    { CoinJoinFeeRateMedians: [], RoundStates: [lastRound] },
+                    'OtherCoordinatorIdentifier',
+                ),
+            ).toMatchObject({ feeRateMedian: 2, coordinationFeeRate: { rate: 0.003 } });
+            expect(
+                transformStatus(
+                    { CoinJoinFeeRateMedians: [], RoundStates: [lastRound] },
+                    coordinatorName,
+                ),
+            ).toMatchObject({
+                feeRateMedian: 3,
+                coordinationFeeRate: { rate: 0.001, plebsDontPayThreshold: 0 },
+                allowedInputAmounts: { min: 10000, max: 100000 },
+            });
         });
     });
 
