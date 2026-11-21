@@ -1,4 +1,4 @@
-import { coinjoinReducer } from '@suite/coinjoin';
+import { chooseCoordinator, coinjoinReducer, setDebugSettings } from '@suite/coinjoin';
 import { type DesktopDeviceRootState, prepareDesktopDeviceReducer } from '@suite/device';
 import {
     NewContentIndicatorId,
@@ -309,6 +309,22 @@ describe('Storage actions', () => {
         store.dispatch((await preloadStore())!);
 
         expect(store.getState().wallet.settings.enabledNetworks).toEqual([btcSymbol]);
+    });
+
+    it('should store the chosen coinjoin coordinator apart from the coinjoin debug settings', async () => {
+        const store = mockStore(db, getInitialState());
+        const coordinatorUrl = 'https://other.example/wabisabi/';
+
+        await store.dispatch(chooseCoordinator(btcSymbol, coordinatorUrl));
+        await store.dispatch(
+            setDebugSettings({ coinjoinServerEnvironment: { [btcSymbol]: 'public' } }),
+        );
+        const reloadedStore = mockStore(db, getInitialState());
+        reloadedStore.dispatch((await preloadStore())!);
+
+        const { coinjoin } = reloadedStore.getState().wallet;
+        expect(coinjoin.chosenCoordinatorUrls).toEqual({ btc: coordinatorUrl });
+        expect(coinjoin.debug).toEqual({ coinjoinServerEnvironment: { btc: 'public' } });
     });
 
     it('should store suite settings in the db and update them automatically', async () => {

@@ -1,7 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import styled from 'styled-components';
 
-import { coinjoinAccountUpdateSetupOption, selectCoinjoinAccountByKey } from '@suite/coinjoin';
+import {
+    coinjoinAccountUpdateSetupOption,
+    isCoinjoinSupportedSymbol,
+    selectCoinjoinAccountByKey,
+} from '@suite/coinjoin';
 import { Translation } from '@suite/intl';
 import { type AccountKey } from '@suite-common/wallet-types';
 import { Banner, Card, Radio, motionAnimation, motionEasing } from '@trezor/components';
@@ -11,6 +15,7 @@ import { injectDispatch } from '@trezor/redux-utils';
 import { useSelector } from '#src/hooks/suite/useSelector';
 
 import { AnonymityLevelSetup } from './AnonymityLevelSetup';
+import { CoordinatorSetup } from './CoordinatorSetup';
 import { MaxMiningFeeSetup } from './MaxMiningFeeSetup';
 import { SkipRoundsSetup } from './SkipRoundsSetup';
 
@@ -100,6 +105,9 @@ export const CoinjoinSetup = ({ accountKey }: CoinjoinSetupProps) => {
                     </motion.div>
                 )}
             </AnimatePresence>
+            {isCoinjoinSupportedSymbol(coinjoinAccount.symbol) && (
+                <CoordinatorSetup symbol={coinjoinAccount.symbol} />
+            )}
         </Card>
     );
 };

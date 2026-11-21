@@ -4,6 +4,8 @@
 
 Suite has no default coordinator for Bitcoin and Testnet. Coinjoin works only in the desktop app with Tor enabled, and signing needs firmware 2.7.2 or newer, or 1.13.0 or newer on Trezor Model One.
 
+Each network lists the coordinators it can mix through in `coordinators` of `COINJOIN_NETWORKS` (`suite/coinjoin/src/config.ts`), the first one is the default. The coinjoin settings of a Privacy account show the coordinator in use: its address, its identifier (the `CoordinationIdentifier` of its rounds, which Suite commits to in ownership proofs), the highest coordinator fee a session authorizes and the fewest inputs of a round. With more than one listed, the user chooses one there. The choice applies to all Privacy accounts of the network, is kept across restarts and cannot change while a coinjoin session of the network exists, paused ones included. A coordinator that is no longer listed falls back to the default one. A coordinator passed at startup as below replaces the chosen one for that launch.
+
 1. Run `yarn suite:dev:desktop`. It also rebuilds the main process, where the coinjoin client runs. Quit the Electron app it opens (Cmd+Q on macOS), the dev server keeps running.
 
 1. Start Electron with the coordinator. Use `.test.` instead of `.btc.` for Testnet. The override applies only to this launch.

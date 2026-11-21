@@ -321,7 +321,7 @@ export const updatePendingAccountInfoThunk =
         const api = await dispatch(coinjoinClientActions.initCoinjoinServiceThunk(account.symbol));
         if (!api) return;
 
-        const { backend, client } = api;
+        const { backend } = api;
         const transactions = state.wallet.transactions.transactions[account.key] ?? [];
         const checkpoint = coinjoinAccount.checkpoints[0];
         if (!checkpoint) return;
@@ -333,7 +333,8 @@ export const updatePendingAccountInfoThunk =
             getAccountCache(account),
         );
 
-        const { anonymityScores } = await client.analyzeTransactions(
+        // api.client, not one read before, which a coordinator change may have disabled meanwhile.
+        const { anonymityScores } = await api.client.analyzeTransactions(
             accountInfo.history.transactions,
             ['anonymityScores'],
         );
@@ -425,7 +426,7 @@ export const fetchAndUpdateAccountThunk =
         const api = await dispatch(coinjoinClientActions.initCoinjoinServiceThunk(symbol));
         if (!api) return;
 
-        const { backend, client } = api;
+        const { backend } = api;
 
         // get fresh account info, mainly so there's nothing between syncing check and startCoinjoinAccountSync
         const account = selectAccountByKey(getState(), accountKey);
@@ -477,17 +478,18 @@ export const fetchAndUpdateAccountThunk =
 
                 // TODO accountInfo.utxo don't have proper utxo.confirmations field, only 0/1
 
+                // api.client, not one read before the scan, which a coordinator change may have
+                // disabled meanwhile.
                 if (isInitialUpdate) {
                     // On initial update, calculate account anonymity set AND liquidity clue in CoinjoinClient
                     // Further updates of liquidity clue are done after coinjoin tx signing process
-                    const { anonymityScores, rawLiquidityClue } = await client.analyzeTransactions(
-                        accountInfo.history.transactions,
-                    );
+                    const { anonymityScores, rawLiquidityClue } =
+                        await api.client.analyzeTransactions(accountInfo.history.transactions);
                     accountInfo.addresses.anonymitySet = anonymityScores;
                     dispatch(coinjoinAccountSetLiquidityClue(account.key, rawLiquidityClue));
                 } else {
                     // Else calculate only account anonymity set in CoinjoinClient
-                    const { anonymityScores } = await client.analyzeTransactions(
+                    const { anonymityScores } = await api.client.analyzeTransactions(
                         accountInfo.history.transactions,
                         ['anonymityScores'],
                     );

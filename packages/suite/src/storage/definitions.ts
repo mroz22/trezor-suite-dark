@@ -3,7 +3,11 @@ import { type FieldValues } from 'react-hook-form';
 import type { DBSchema } from 'idb';
 
 import { type DesktopBluetoothDevice } from '@suite/bluetooth';
-import { type CoinjoinAccount, type CoinjoinDebugSettings } from '@suite/coinjoin';
+import {
+    type CoinjoinAccount,
+    type CoinjoinCoordinatorSettings,
+    type CoinjoinDebugSettings,
+} from '@suite/coinjoin';
 import { type DebugState } from '@suite/debug';
 import type { FlagsState } from '@suite/flags';
 import type { SuiteSettingsState } from '@suite/settings';
@@ -157,9 +161,11 @@ export interface SuiteDBSchema extends DBSchema {
         key: string; // accountKey
         value: CoinjoinAccount;
     };
+    // The coordinators chosen in the coinjoin settings have their own key here, so that they need no
+    // new store. Either record conforms to the value, all its fields are optional.
     coinjoinDebugSettings: {
-        key: 'debug';
-        value: CoinjoinDebugSettings;
+        key: 'debug' | 'coordinators';
+        value: CoinjoinDebugSettings & CoinjoinCoordinatorSettings;
     };
     analytics: {
         key: 'suite';

@@ -100,6 +100,12 @@ export interface CoinjoinDebugSettings {
     coinjoinConfigOverride?: PartialRecord<NetworkSymbol, Partial<CoinjoinNetworksConfig>>;
 }
 
+// Url of the coordinator chosen in the coinjoin settings, per network. Stored under its own key in
+// the coinjoinDebugSettings store, which needs no new store.
+export type CoinjoinCoordinatorSettings = {
+    chosenCoordinatorUrls?: PartialRecord<NetworkSymbol, string>;
+};
+
 export type CoinjoinConfig = {
     averageAnonymityGainPerRound: number;
     roundsFailRateBuffer: number;
@@ -114,5 +120,6 @@ export interface CoinjoinState {
     clients: PartialRecord<Account['symbol'], CoinjoinClientInstance>;
     isPreloading?: boolean;
     debug?: CoinjoinDebugSettings;
+    chosenCoordinatorUrls?: PartialRecord<NetworkSymbol, string>;
     config: CoinjoinConfig;
 }
