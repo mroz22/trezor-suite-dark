@@ -18,9 +18,13 @@ Suite has no default coordinator for Bitcoin and Testnet. Coinjoin works only in
     >
     > The main process whitelists only the coordinator host and its subdomains, so the backend url has to live there too. A sibling host (`api.example.com` next to `coord.example.com`) is blocked with `Request blocked, not whitelisted domain`.
 
+    Suite skips rounds whose announced minimum number of inputs (`MinInputCountByRound`) is below 21 on Bitcoin and 2 on Testnet and Regtest. The skip shows only as `Skipping round` in the info log. Before it registers outputs and again before it signs, Suite also refuses a round that has fewer inputs than this minimum or only inputs of its own accounts. Add `'--state.wallet.coinjoin.debug.coinjoinConfigOverride.btc.minInputCount=<count>'` to the command to change the minimum for one launch.
+
 ## Development
 
 For development and e2e purposes you can use local version of coinjoin backend (`Regtest` only).
+
+Suite refuses a coinjoin whose inputs all belong to its own accounts, so a regtest round needs at least one input of another participant, for example of a second Suite instance.
 
 1. run `./docker/docker-coinjoin-backend.sh`
 

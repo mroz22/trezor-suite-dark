@@ -23,6 +23,7 @@ import {
 import type { Account } from '../Account';
 import * as coordinator from '../coordinator';
 import * as middleware from '../middleware';
+import { verifyRoundInputs } from './verifyRoundInputs';
 
 const getTransactionData = (
     round: CoinjoinRoundShape,
@@ -46,6 +47,9 @@ const getTransactionData = (
     if (registeredOutputs.length < myOutputsInRound.length) {
         throw new Error(`Inconsistent data. Unexpected sum of registered outputs.`);
     }
+
+    // The status may lie differently in each phase, check the inputs again before signing.
+    verifyRoundInputs(round, options);
 
     const inputs = registeredInputs
         .sort((a, b) => sortInputs(a.Coin, b.Coin))

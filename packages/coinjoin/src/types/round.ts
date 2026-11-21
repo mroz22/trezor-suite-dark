@@ -19,6 +19,7 @@ export interface CoinjoinRoundOptions {
     coordinatorName: string;
     coordinatorUrl: string;
     middlewareUrl: string;
+    minInputCount: number; // CoinjoinClientSettings.minInputCount or its network default.
     logger: Logger;
     setSessionPhase: (event: SessionPhaseEvent) => void;
 }

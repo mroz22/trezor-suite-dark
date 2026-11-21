@@ -6,6 +6,7 @@ import { CoinjoinPrison } from './CoinjoinPrison';
 import { CoinjoinRound } from './CoinjoinRound';
 import { Status } from './Status';
 import { type AnalyzeTransactionsResult, analyzeTransactions } from './analyzeTransactions';
+import { ROUND_MIN_INPUT_COUNT } from '../constants';
 import type {
     CoinjoinClientEvents,
     CoinjoinClientSettings,
@@ -190,7 +191,8 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
         );
 
         // a round cannot exist without a coordinator, Status.start refuses to run without one
-        const { coordinatorUrl } = this.settings;
+        const { coordinatorUrl, minInputCount = ROUND_MIN_INPUT_COUNT[this.settings.network] } =
+            this.settings;
 
         // there are no CoinjoinRounds to process? try to create new one
         if (roundsToProcess.length === 0 && coordinatorUrl) {
@@ -205,6 +207,7 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
                     coordinatorName: this.settings.coordinatorName,
                     coordinatorUrl,
                     middlewareUrl: this.settings.middlewareUrl,
+                    minInputCount,
                     logger: this.logger,
                     setSessionPhase: sessionPhase => this.setSessionPhase(sessionPhase),
                 },
