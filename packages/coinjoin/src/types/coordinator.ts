@@ -76,8 +76,8 @@ export interface CoinjoinRoundParameters {
     MaxInputCountByRound: number;
     AllowedInputAmounts: AllowedRange;
     AllowedOutputAmounts: AllowedRange;
-    AllowedInputTypes: AllowedScriptTypes[];
-    AllowedOutputTypes: AllowedScriptTypes[];
+    AllowedInputTypes: RoundScriptType[];
+    AllowedOutputTypes: RoundScriptType[];
     StandardInputRegistrationTimeout: string;
     ConnectionConfirmationTimeout: string;
     OutputRegistrationTimeout: string;
@@ -85,12 +85,14 @@ export interface CoinjoinRoundParameters {
     BlameInputRegistrationTimeout: string;
     MinAmountCredentialValue: number;
     MaxAmountCredentialValue: number;
+    MaxVsizeCredentialValue?: number;
     // Also the max vsize credential value. Coordinators running WalletWasabi 2.8.0 or newer no
     // longer send MaxVsizeCredentialValue.
     MaxVsizeAllocationPerAlice: number;
     MaxTransactionSize: number;
     MinRelayTxFee: number;
     DelayTransactionSigning: boolean;
+    CoordinationIdentifier: string;
 }
 
 export interface CoinjoinRoundCreatedEvent {
@@ -130,6 +132,8 @@ export interface AllowedRange {
     Max: number;
 }
 export type AllowedScriptTypes = 'P2WPKH' | 'Taproot';
+// NBitcoin ScriptType. WalletWasabi coordinators send its value (P2WPKH is 4, Taproot 7).
+export type RoundScriptType = AllowedScriptTypes | number;
 
 export interface CoinjoinState {
     Type: string; // TODO enum?

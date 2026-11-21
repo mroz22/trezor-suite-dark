@@ -1,11 +1,11 @@
 import { type RequestOptions, coordinatorRequest as request } from './coordinatorRequest';
 import {
     type AllowedRange,
-    type AllowedScriptTypes,
     type CoordinationFeeRate,
     type CredentialsResponseValidation,
     type IssuerParameter,
     type RealCredentials,
+    type RoundScriptType,
     type ZeroCredentials,
 } from '../types/coordinator';
 import {
@@ -87,7 +87,7 @@ export const getOutputsAmounts = async (
 
 export const selectInputsForRound = async (
     body: {
-        AllowedInputTypes: AllowedScriptTypes[];
+        AllowedInputTypes: RoundScriptType[];
         CoordinationFeeRate: CoordinationFeeRate;
         MiningFeeRate: number;
         AllowedInputAmounts: AllowedRange;

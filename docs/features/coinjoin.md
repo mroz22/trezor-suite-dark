@@ -20,11 +20,15 @@ Suite has no default coordinator for Bitcoin and Testnet. Coinjoin works only in
 
     Suite skips rounds whose announced minimum number of inputs (`MinInputCountByRound`) is below 21 on Bitcoin and 2 on Testnet and Regtest. The skip shows only as `Skipping round` in the info log. Before it registers outputs and again before it signs, Suite also refuses a round that has fewer inputs than this minimum or only inputs of its own accounts. Add `'--state.wallet.coinjoin.debug.coinjoinConfigOverride.btc.minInputCount=<count>'` to the command to change the minimum for one launch.
 
+    Suite checks that the id of each round is the hash of the round parameters, as WalletWasabi clients do since version 2.3.0, and that the round names the coordinator Suite commits to in ownership proofs (`coordinatorName`). It skips any other round with `Its id does not match its parameters and coordinator` in the warn log, and it leaves a round it joined when the parameters of the round change.
+
 ## Development
 
 For development and e2e purposes you can use local version of coinjoin backend (`Regtest` only).
 
 Suite refuses a coinjoin whose inputs all belong to its own accounts, so a regtest round needs at least one input of another participant, for example of a second Suite instance.
+
+Coordinators older than WalletWasabi 2.3.0, such as the one of the local backend, compute the id of a blame round before they set its input registration timeout. Suite skips their blame rounds as rounds whose id does not match their parameters and releases the inputs that wait for them.
 
 1. run `./docker/docker-coinjoin-backend.sh`
 

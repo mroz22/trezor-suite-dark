@@ -19461,6 +19461,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@trezor/coinjoin@workspace:packages/coinjoin"
   dependencies:
+    "@noble/hashes": "npm:^2.0.1"
     "@suite-common/suite-constants": "workspace:*"
     "@trezor/blockchain-link": "workspace:*"
     "@trezor/blockchain-link-types": "workspace:*"

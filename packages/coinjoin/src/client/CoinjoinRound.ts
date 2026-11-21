@@ -2,9 +2,10 @@ import type { Logger } from '@trezor/logger';
 import { TypedEmitter, arrayDistinct, arrayPartition, scheduleAction } from '@trezor/utils';
 
 import { ACCOUNT_BUSY_TIMEOUT, ROUND_PHASE_PROCESS_TIMEOUT } from '../constants';
-import { type EndRoundState, RoundPhase, SessionPhase } from '../enums';
+import { EndRoundState, RoundPhase, SessionPhase } from '../enums';
 import { type Account } from './Account';
 import { Alice } from './Alice';
+import { CoordinatorMisbehaviorError } from './coordinator';
 import { type AccountAddress, type RegisterAccountParams } from '../types/account';
 import { type CoinjoinRoundParameters, type Round } from '../types/coordinator';
 import { type CoinjoinPrisonShape } from '../types/prison';
@@ -24,6 +25,7 @@ import { inputRegistration } from './round/inputRegistration';
 import { outputRegistration } from './round/outputRegistration';
 import { selectRound } from './round/selectRound';
 import { transactionSigning } from './round/transactionSigning';
+import { getInputRegistrationEnd, isRoundIdMatching } from '../utils/roundHasher';
 import {
     getCoinjoinRoundDeadlines,
     getCommitmentData,
@@ -111,7 +113,8 @@ export class CoinjoinRound extends TypedEmitter<Events> {
         this.phase = 0;
         this.endRoundState = round.EndRoundState;
         this.coinjoinState = round.CoinjoinState;
-        this.inputRegistrationEnd = round.InputRegistrationEnd;
+        // As WalletWasabi derives it, InputRegistrationEnd is not part of the round id.
+        this.inputRegistrationEnd = new Date(getInputRegistrationEnd(round)).toISOString();
         this.amountCredentialIssuerParameters = round.AmountCredentialIssuerParameters;
         this.vsizeCredentialIssuerParameters = round.VsizeCredentialIssuerParameters;
         const roundParameters = getRoundParameters(round);
@@ -157,6 +160,31 @@ export class CoinjoinRound extends TypedEmitter<Events> {
     }
 
     async onPhaseChange(changed: Round, phaseStartLowerBound?: number) {
+        // The round was joined with parameters which match its id, so other parameters under the
+        // same id are a lie. This client keeps the joined ones (see the constructor), but the
+        // coordinator may serve other ones to other participants to tell their requests apart.
+        // Leave before a running process is aborted below (an ended round does not cool off). The
+        // aborted process then ends the round with the inputs failed with the lie, an aborted
+        // input registration would drop them as not registered.
+        if (
+            this.phase !== RoundPhase.Ended &&
+            !isRoundIdMatching(changed, this.options.coordinatorName)
+        ) {
+            this.logger.error(
+                `Leaving round ~~${this.id}~~. Its parameters no longer match its id`,
+            );
+            this.inputs.forEach(input => {
+                input.clearConfirmationInterval();
+                input.setError(
+                    new CoordinatorMisbehaviorError('Round parameters do not match the round id'),
+                );
+            });
+            // process then detains the inputs and ends the round. ended gets no end state, so the
+            // registered addresses stay detained as after other failures on this side.
+            this.phase = RoundPhase.Ended;
+            this.endRoundState = EndRoundState.None;
+        }
+
         if (this.lock) {
             // if round is currently locked and phase was changed in expected order
             // try to interrupt running process and start processing new phase

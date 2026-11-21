@@ -1,3 +1,4 @@
+import { CoordinatorMisbehaviorError } from './coordinator';
 import { type AccountUtxo } from '../types/account';
 import {
     type AliceConfirmationInterval,
@@ -51,6 +52,10 @@ export class Alice implements AliceShape {
     }
 
     setError(error: Error) {
+        // A proven lie stays the reason why the input failed, also when the process the lie
+        // aborted fails afterwards.
+        if (this.error instanceof CoordinatorMisbehaviorError) return;
+
         this.error = error;
     }
 

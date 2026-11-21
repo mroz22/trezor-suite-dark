@@ -16,6 +16,7 @@ import type {
     CoinjoinRoundShape,
 } from '../../types/round';
 import { getInputSize, getOutputSize } from '../../utils/coordinatorUtils';
+import { getInputRegistrationEnd, isRoundIdMatching } from '../../utils/roundHasher';
 import { type Account } from '../Account';
 import { type Round } from '../coordinator';
 import * as middleware from '../middleware';
@@ -91,6 +92,16 @@ const getRoundSkipReason = (
 const loggedSkippedRounds = new Set<string>();
 const LOGGED_SKIPPED_ROUNDS_LIMIT = 100;
 
+const logSkippedRoundOnce = (roundId: string, log: () => void) => {
+    if (loggedSkippedRounds.has(roundId)) return;
+
+    if (loggedSkippedRounds.size >= LOGGED_SKIPPED_ROUNDS_LIMIT) {
+        loggedSkippedRounds.clear();
+    }
+    loggedSkippedRounds.add(roundId);
+    log();
+};
+
 // Basic preselect CoinjoinRound candidates
 // reuse existing CoinjoinRounds or create new one
 export const getRoundCandidates = ({
@@ -101,15 +112,28 @@ export const getRoundCandidates = ({
     prison,
 }: Omit<SelectRoundProps, 'aliceGenerator' | 'accounts'>) => {
     const now = Date.now();
-    const { logger, minInputCount } = options;
+    const { logger, minInputCount, coordinatorName } = options;
 
     return statusRounds
-        .filter(
-            round =>
-                round.Phase === RoundPhase.InputRegistration &&
-                new Date(round.InputRegistrationEnd).getTime() - now >
-                    ROUND_SELECTION_REGISTRATION_OFFSET,
-        )
+        .filter(round => round.Phase === RoundPhase.InputRegistration)
+        .filter(round => {
+            // Before anything else uses the id or the parameters of the round. The coordinator
+            // could otherwise serve this client other parameters under the id of the round.
+            if (isRoundIdMatching(round, coordinatorName)) return true;
+            // A joined round is not skipped. Status reports it as changed and
+            // CoinjoinRound.onPhaseChange leaves it.
+            if (coinjoinRounds.some(({ id }) => id === round.Id)) return false;
+
+            logSkippedRoundOnce(round.Id, () =>
+                logger.warn(
+                    `Skipping round ~~${round.Id}~~. Its id does not match its parameters and coordinator`,
+                ),
+            );
+            releaseRefusedBlameRound({ blameOf: round.BlameOf, prison, logger });
+
+            return false;
+        })
+        .filter(round => getInputRegistrationEnd(round) - now > ROUND_SELECTION_REGISTRATION_OFFSET)
         .flatMap(round => {
             const current = coinjoinRounds.find(r => r.id === round.Id);
             if (current) return current;
@@ -125,13 +149,9 @@ export const getRoundCandidates = ({
             const skipReason = getRoundSkipReason(round.roundParameters, minInputCount);
             if (!skipReason) return true;
 
-            if (!loggedSkippedRounds.has(round.id)) {
-                if (loggedSkippedRounds.size >= LOGGED_SKIPPED_ROUNDS_LIMIT) {
-                    loggedSkippedRounds.clear();
-                }
-                loggedSkippedRounds.add(round.id);
-                logger.info(`Skipping round ~~${round.id}~~. ${skipReason}`);
-            }
+            logSkippedRoundOnce(round.id, () =>
+                logger.info(`Skipping round ~~${round.id}~~. ${skipReason}`),
+            );
             releaseRefusedBlameRound({ blameOf: round.blameOf, prison, logger });
 
             return false;

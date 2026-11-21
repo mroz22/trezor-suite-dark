@@ -1,8 +1,14 @@
 import { CoinjoinPrison } from '../client/CoinjoinPrison';
 import { CoinjoinRound } from '../client/CoinjoinRound';
 import { ROUND_SELECTION_REGISTRATION_OFFSET } from '../constants';
-import type { AllowedScriptTypes, CoinjoinInputAddedEvent, Round } from '../types/coordinator';
+import type {
+    AllowedScriptTypes,
+    CoinjoinInputAddedEvent,
+    CoinjoinRoundParameters,
+    Round,
+} from '../types/coordinator';
 import type { CoinjoinTransactionData } from '../types/round';
+import { getRoundId } from '../utils/roundHasher';
 
 export const ROUND_CREATION_EVENT = {
     Type: 'RoundCreated' as const,
@@ -37,6 +43,7 @@ export const ROUND_CREATION_EVENT = {
         MaxTransactionSize: 100000,
         MinRelayTxFee: 1000,
         DelayTransactionSigning: true,
+        CoordinationIdentifier: 'CoinJoinCoordinatorIdentifier',
     },
 };
 
@@ -103,8 +110,12 @@ export const FEE_RATE_MEDIANS = [
     },
 ];
 
-export const DEFAULT_ROUND = {
-    Id: '80b4e3efd1aedeb7b140d605946ca5662241d6829b6018bb0eee58c9ac929fce',
+// Its input registration ends 2 * ROUND_SELECTION_REGISTRATION_OFFSET from now.
+const DEFAULT_INPUT_REGISTRATION_START =
+    Date.now() + ROUND_SELECTION_REGISTRATION_OFFSET * 2 - 60000;
+
+const DEFAULT_ROUND_WITHOUT_ID = {
+    Id: '',
     BlameOf: '0000000000000000000000000000000000000000000000000000000000000000',
     AmountCredentialIssuerParameters: {
         Cw: '03CFB034383C718F51182773D3AE90C0826DB752330462CAD73F81A7F0AA3CBB6C',
@@ -119,10 +130,46 @@ export const DEFAULT_ROUND = {
     CoinjoinState: {
         Events: [ROUND_CREATION_EVENT],
     },
-    InputRegistrationEnd: new Date(
-        Date.now() + ROUND_SELECTION_REGISTRATION_OFFSET * 2,
-    ).toUTCString(),
+    InputRegistrationStart: new Date(DEFAULT_INPUT_REGISTRATION_START).toISOString(),
+    InputRegistrationTimeout: '0d 0h 1m 0s',
+    InputRegistrationEnd: new Date(DEFAULT_INPUT_REGISTRATION_START + 60000).toISOString(),
 } as Round;
+
+// The id is the hash of the round parameters, as the coordinator computes it.
+export const DEFAULT_ROUND: Round = {
+    ...DEFAULT_ROUND_WITHOUT_ID,
+    Id: getRoundId(DEFAULT_ROUND_WITHOUT_ID),
+};
+
+type CreateStatusRoundParams = Partial<Omit<Round, 'Id'>> & {
+    RoundParameters?: Partial<CoinjoinRoundParameters>;
+};
+
+// DEFAULT_ROUND with the given changes of its fields and round parameters, its id computed from
+// them. Rounds with the same parameters get the same id, BlameOf and Phase are not part of it.
+export const createStatusRound = ({
+    RoundParameters,
+    ...round
+}: CreateStatusRoundParams = {}): Round => {
+    const statusRound: Round = {
+        ...DEFAULT_ROUND,
+        CoinjoinState: {
+            Type: '',
+            Events: [
+                {
+                    ...ROUND_CREATION_EVENT,
+                    RoundParameters: {
+                        ...ROUND_CREATION_EVENT.RoundParameters,
+                        ...RoundParameters,
+                    },
+                },
+            ],
+        },
+        ...round,
+    };
+
+    return { ...statusRound, Id: getRoundId(statusRound) };
+};
 
 export const STATUS_EVENT = {
     RoundStates: [],
