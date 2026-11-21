@@ -98,6 +98,7 @@ export class CoinjoinRound extends TypedEmitter<Events> {
     roundDeadline: number; // deadline is inaccurate,round may end earlier
     commitmentData: string; // commitment data used for ownership proof and witness requests
     addresses: (AccountAddress & { accountKey: string; amount: number })[] = []; // list of addresses (outputs) used in this round in outputRegistration phase
+    verifiedInputs?: string[]; // sorted outpoints (hash:index) of all inputs verified in outputRegistration phase
     transactionData?: CoinjoinTransactionData; // transaction to sign
     broadcastedTxDetails?: BroadcastedTransactionDetails; // transaction broadcasted
     liquidityClues?: CoinjoinTransactionLiquidityClue[]; // updated liquidity clues

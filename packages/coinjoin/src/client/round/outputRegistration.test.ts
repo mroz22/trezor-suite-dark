@@ -7,6 +7,7 @@ import {
     createCoinjoinRound,
     createInputAddedEvent,
 } from '../../__fixtures__/round.fixture';
+import { verifyOwnershipProof } from '../../utils/ownershipProof';
 
 // mock random delay function
 jest.mock('@trezor/utils', () => {
@@ -18,6 +19,11 @@ jest.mock('@trezor/utils', () => {
         getWeakRandomNumberInRange: () => 0,
     };
 });
+
+// The inputs of other participants have no valid ownership proofs, see verifyRoundInputs.test.ts.
+jest.mock('../../utils/ownershipProof', () => ({
+    verifyOwnershipProof: jest.fn(() => 'valid'),
+}));
 
 jest.mock('./outputDecomposition', () => ({
     ...jest.requireActual('./outputDecomposition'),
@@ -200,6 +206,37 @@ describe('outputRegistration', () => {
         });
     });
 
+    it('refuses a round with an invalid ownership proof before revealing outputs', async () => {
+        const requestedUrls: string[] = [];
+        server?.addListener('test-request', ({ url, resolve }) => {
+            requestedUrls.push(url);
+            resolve();
+        });
+        jest.mocked(verifyOwnershipProof).mockReturnValueOnce('invalid');
+
+        const response = await outputRegistration(
+            createCoinjoinRound([createInput('account-A', OWN_OUTPOINT)], {
+                ...server?.requestOptions,
+                round: {
+                    phase: 2,
+                    coinjoinState: createCoinjoinState([OWN_OUTPOINT, OTHER_OUTPOINT]),
+                },
+            }),
+            [],
+            server?.requestOptions,
+        );
+
+        expect(verifyOwnershipProof).toHaveBeenCalledTimes(1); // not for the own input
+        expect(outputDecomposition).not.toHaveBeenCalled();
+        expect(requestedUrls).toEqual([]); // no /credential-issuance or /output-registration
+        expect(response.verifiedInputs).toBeUndefined();
+        response.inputs.forEach(input => {
+            expect(input.error?.message).toMatch(
+                /1 inputs of other participants with an invalid ownership proof/,
+            );
+        });
+    });
+
     it('does not take a missing own input without confirmed credentials for a lie', async () => {
         const requestedUrls: string[] = [];
         server?.addListener('test-request', ({ url, resolve }) => {
@@ -290,6 +327,11 @@ describe('outputRegistration', () => {
             response.inputs.forEach(input => {
                 expect(input.error).toBeUndefined();
             });
+            // Sorted outpoints as hash:index, the transaction is signed only with these inputs.
+            expect(response.verifiedInputs).toEqual([
+                `${'0'.repeat(62)}a0:1`,
+                `${'0'.repeat(62)}b0:2`,
+            ]);
             expect(response.addresses).toEqual([
                 { ...changeAddress, accountKey: 'account-A', amount: 100000 - outputFee },
             ]);

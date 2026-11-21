@@ -41,7 +41,7 @@ const getTransactionData = (
     }
 
     // The status may lie differently in each phase, check the inputs again before signing.
-    verifyRoundInputs(round, options);
+    const registeredInputKeys = verifyRoundInputs(round, options);
 
     // As WalletWasabi CoinJoinClient.SanityCheck: every own output has to be in the transaction
     // with at least the amount expected when it was registered.
@@ -55,6 +55,25 @@ const getTransactionData = (
     if (underpaidOutputs.length > 0) {
         throw new coordinator.CoordinatorMisbehaviorError(
             `Inconsistent data. ${underpaidOutputs.length} own outputs missing or with a lower amount.`,
+        );
+    }
+
+    // Sign only the inputs verified before the outputs were registered. The client requests the
+    // status without RoundCheckpoints and replaces the whole CoinjoinState with each phase
+    // (CoinjoinRound.onPhaseChange), so the coordinator could show other inputs now. WalletWasabi
+    // gets only new events and appends them (RoundStateUpdater, AddPreviousStates).
+    const { verifiedInputs } = round;
+    if (!verifiedInputs) {
+        // Not expected: outputRegistration sets them before it registers any output.
+        throw new Error('Inputs of the round not verified before output registration.');
+    }
+
+    if (
+        registeredInputKeys.length !== verifiedInputs.length ||
+        registeredInputKeys.some((key, index) => key !== verifiedInputs[index])
+    ) {
+        throw new coordinator.CoordinatorMisbehaviorError(
+            'Inconsistent data. Registered inputs changed after output registration.',
         );
     }
 

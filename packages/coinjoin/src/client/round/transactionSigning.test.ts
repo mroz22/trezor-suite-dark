@@ -8,6 +8,11 @@ import { createCoinjoinRound, createInputAddedEvent } from '../../__fixtures__/r
 import { SessionPhase } from '../../enums';
 import * as coordinator from '../coordinator';
 
+// The inputs of other participants have no valid ownership proofs, see verifyRoundInputs.test.ts.
+jest.mock('../../utils/ownershipProof', () => ({
+    verifyOwnershipProof: () => 'valid',
+}));
+
 jest.mock('../coordinator', () => ({
     ...jest.requireActual('../coordinator'),
     transactionSignature: jest.fn(jest.requireActual('../coordinator').transactionSignature),
@@ -29,6 +34,13 @@ describe('transactionSigning', () => {
 
     // Every own input which reaches signing got its confirmed credentials from the coordinator.
     const CONFIRMED = { confirmedAmountCredentials: [{ Value: 1 }] };
+
+    // Outpoints (hash:index) of the own input 1b5b1fee…00000000 and the external input
+    // 0000…01000000, sorted, as outputRegistration pins them.
+    const VERIFIED_INPUTS = [
+        `${'0'.repeat(64)}:1`,
+        '9fc41d8abd339243105397675ab237a344a71190635fdb5342eddfa4ee1f5b1b:0',
+    ];
 
     const COINJOIN_REQUEST = {
         fee_rate: 300000,
@@ -69,6 +81,7 @@ describe('transactionSigning', () => {
                     ...server?.requestOptions,
                     round: {
                         phase: 3,
+                        verifiedInputs: VERIFIED_INPUTS,
                         addresses: [
                             {
                                 accountKey: 'account-A',
@@ -167,6 +180,7 @@ describe('transactionSigning', () => {
                     ...server?.requestOptions,
                     round: {
                         phase: 3,
+                        verifiedInputs: VERIFIED_INPUTS,
                         addresses: [
                             {
                                 accountKey: 'account-A',
@@ -411,6 +425,8 @@ describe('transactionSigning', () => {
             '1b5b1feea4dfed4253db5f639011a744a337b25a67975310439233bd8a1dc49f00000000';
         const OTHER_OUTPOINT =
             '000000000000000000000000000000000000000000000000000000000000000001000000';
+        const ANOTHER_OUTPOINT =
+            '000000000000000000000000000000000000000000000000000000000000000002000000';
         const OWN_OUTPUT = {
             accountKey: 'account-A',
             path: "m/10025'/0'/0'/0'/1/0",
@@ -431,6 +447,7 @@ describe('transactionSigning', () => {
                 setSessionPhase,
                 round: {
                     phase: 3,
+                    verifiedInputs: VERIFIED_INPUTS,
                     addresses: [OWN_OUTPUT],
                     coinjoinState: {
                         Type: '',
@@ -466,6 +483,18 @@ describe('transactionSigning', () => {
                 [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT, OWN_OUTPOINT],
                 2,
                 /1 duplicate or malformed registered inputs/,
+            ],
+            [
+                'an input added after output registration',
+                [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT, ANOTHER_OUTPOINT],
+                2,
+                /Registered inputs changed after output registration/,
+            ],
+            [
+                'an input replaced after output registration',
+                [OWN_OUTPOINT.toUpperCase(), ANOTHER_OUTPOINT],
+                2,
+                /Registered inputs changed after output registration/,
             ],
         ])(
             'refuses to sign a transaction with %s',
@@ -573,6 +602,27 @@ describe('transactionSigning', () => {
             expect(response.transactionData?.outputs).toEqual([
                 expect.objectContaining({ path: OWN_OUTPUT.path, amount: OWN_OUTPUT.amount }),
             ]);
+        });
+
+        it('refuses to sign inputs which were not verified before output registration', async () => {
+            const round = createSigningRound(
+                [createInput('account-A', OWN_OUTPOINT, CONFIRMED)],
+                [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT],
+            );
+            round.verifiedInputs = undefined;
+            const response = await transactionSigning(round, ACCOUNTS, {
+                ...server?.requestOptions,
+                network: networks.bitcoin,
+            });
+
+            expect(response.transactionData).toBeUndefined();
+            expect(round.getRequest()).toBeUndefined(); // nothing to sign on the device
+            response.inputs.forEach(input => {
+                expect(input.error).not.toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+                expect(input.error?.message).toMatch(
+                    /Inputs of the round not verified before output registration/,
+                );
+            });
         });
 
         it('refuses to sign a transaction without inputs of other participants', async () => {
