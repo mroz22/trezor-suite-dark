@@ -87,6 +87,7 @@ const mockComposedLevels = (inputs: AccountUtxo[]): PrecomposedLevels => ({
 
 type UtxoSelectionTestState = {
     wallet: {
+        accounts: Account[];
         transactions: Pick<TransactionsState, 'transactions'>;
         coinjoin: Pick<CoinjoinState, 'accounts'>;
     };
@@ -112,6 +113,7 @@ const renderUtxoSelection = ({
 }: RenderUtxoSelectionParams) => {
     const preloadedState: UtxoSelectionTestState = {
         wallet: {
+            accounts: [account],
             transactions: { transactions: {} },
             coinjoin: { accounts: coinjoinAccounts },
         },

@@ -1,11 +1,16 @@
+import { testMocks } from '@suite-common/test-utils';
 import { asNetworkSymbol } from '@suite-common/wallet-config';
-import { mockAccountKey } from '@suite-common/wallet-types/mocks';
+import { type AccountsRootState } from '@suite-common/wallet-core';
+import { mockAccountKey, mockWalletAccount } from '@suite-common/wallet-types/mocks';
+import { RoundPhase } from '@trezor/coinjoin';
 
 import { initialState } from './coinjoinReducer';
 import {
     type CoinjoinRootState,
     selectMaxCoordinatorFeeRateByAccountKey,
+    selectRegisteredUtxosByAccountKey,
 } from './coinjoinSelectors';
+import { type CoinjoinAccount, WabiSabiProtocolErrorCode } from './coinjoinTypes';
 import { CLIENT_STATUS_FALLBACK } from './config';
 
 const btcSymbol = asNetworkSymbol('btc');
@@ -81,5 +86,158 @@ describe('selectMaxCoordinatorFeeRateByAccountKey', () => {
 
     it('returns undefined without a coinjoin client', () => {
         expect(selectMaxCoordinatorFeeRateByAccountKey(getState({}), ACCOUNT_KEY)).toBeUndefined();
+    });
+});
+
+describe('selectRegisteredUtxosByAccountKey', () => {
+    type Prison = NonNullable<CoinjoinAccount['prison']>;
+    type Inmate = Prison[string];
+
+    const SESSION: CoinjoinAccount['session'] = {
+        targetAnonymity: 10,
+        maxRounds: 10,
+        maxFeePerKvbyte: 1,
+        maxCoordinatorFeeRate: 0.003,
+        timeCreated: 0,
+        sessionPhaseQueue: [],
+        signedRounds: [],
+    };
+
+    // Change addresses 0 to 39, the one with index 10 has a confirmed transaction, so the client
+    // gets those with index 11 to 30 without an unconfirmed output.
+    const createAccount = (addressesWithUtxo: string[]) =>
+        mockWalletAccount({
+            symbol: btcSymbol,
+            accountType: 'coinjoin',
+            path: "m/10025'/0'/0'/1'",
+            addresses: {
+                change: Array.from({ length: 40 }, (_, index) => ({
+                    address: `bc1p${index}`,
+                    path: `m/10025'/0'/0'/1'/1/${index}`,
+                    transfers: index === 10 ? 1 : 0,
+                    balance: '0',
+                    sent: '0',
+                    received: '0',
+                })),
+                used: [],
+                unused: [],
+            },
+            utxo: addressesWithUtxo.map(address =>
+                testMocks.getUtxo({ address, confirmations: 0 }),
+            ),
+        });
+
+    type SelectParams = {
+        prison: Prison;
+        addressesWithUtxo?: string[];
+        session?: CoinjoinAccount['session'];
+    };
+
+    // The round 'running' is in the status, the round 'signed' was signed here.
+    const select = ({ prison, addressesWithUtxo = [], session }: SelectParams) => {
+        const account = createAccount(addressesWithUtxo);
+        const state: CoinjoinRootState & AccountsRootState = {
+            wallet: {
+                accounts: [account],
+                coinjoin: {
+                    ...initialState,
+                    accounts: [
+                        {
+                            key: account.key,
+                            symbol: btcSymbol,
+                            rawLiquidityClue: null,
+                            prison,
+                            session,
+                            transactionCandidates: [{ roundId: 'signed' }],
+                        },
+                    ],
+                    clients: {
+                        [btcSymbol]: {
+                            ...CLIENT_STATUS_FALLBACK,
+                            rounds: [{ id: 'running', phase: RoundPhase.OutputRegistration }],
+                            status: 'loaded',
+                        },
+                    },
+                },
+            },
+        };
+
+        return selectRegisteredUtxosByAccountKey(state, account.key);
+    };
+
+    // Output registered in a round, see CoinjoinPrison.detainRegisteredOutput.
+    const registeredOutput = (roundId: string, sentenceStart: number): Inmate => ({
+        type: 'output',
+        errorCode: 'registeredOutput',
+        roundId,
+        sentenceStart,
+        sentenceEnd: Infinity,
+    });
+
+    const detain = (indexes: number[], inmate: Inmate): Prison =>
+        Object.fromEntries(indexes.map(index => [`bc1p${index}`, inmate]));
+
+    const release = (prison: Prison, address: string) =>
+        Object.fromEntries(Object.entries(prison).filter(([id]) => id !== address));
+
+    // Every address the client gets is detained: outputs of a broadcast transaction, of a round in
+    // the status, of a round signed here and of two failed rounds.
+    const fullWindowPrison: Prison = {
+        ...detain([11, 12, 13, 14, 15], {
+            type: 'output',
+            errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+            roundId: 'broadcast',
+            sentenceStart: 1,
+            sentenceEnd: Infinity,
+        }),
+        ...detain([16, 17, 18, 19, 20], registeredOutput('running', 1)),
+        ...detain([21, 22, 23, 24, 25], registeredOutput('signed', 1)),
+        ...detain([26, 27, 30], registeredOutput('failed-later', 4)),
+        ...detain([28], registeredOutput('failed', 2)),
+        ...detain([29], registeredOutput('failed', 3)),
+        // An output of a failed round below the last used address, a regular send skips it.
+        ...detain([5], registeredOutput('failed', 0)),
+    };
+
+    it('selects outputs detained for good also without a session', () => {
+        const outputs = {
+            ...detain([11], registeredOutput('failed', 1)),
+            ...detain([12], {
+                type: 'output',
+                errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+                sentenceStart: 1,
+                sentenceEnd: Infinity,
+            }),
+        };
+        const prison: Prison = {
+            ...outputs,
+            A0: { type: 'input', roundId: 'running', sentenceStart: 1, sentenceEnd: 2 },
+        };
+
+        expect(select({ prison })).toEqual(outputs);
+        expect(select({ prison, session: SESSION })).toEqual(prison);
+    });
+
+    it('keeps every output while an address the client gets is free', () => {
+        const prison = release(fullWindowPrison, 'bc1p30');
+
+        expect(select({ prison })).toEqual(prison);
+    });
+
+    it('frees the oldest output of a failed round once no address the client gets is free', () => {
+        expect(select({ prison: fullWindowPrison })).toEqual(release(fullWindowPrison, 'bc1p28'));
+        // A coinjoin may pay an address with an unconfirmed output, the client does not get it.
+        expect(select({ prison: fullWindowPrison, addressesWithUtxo: ['bc1p28'] })).toEqual(
+            release(fullWindowPrison, 'bc1p29'),
+        );
+    });
+
+    it('frees nothing without an output of a failed round', () => {
+        const prison = {
+            ...fullWindowPrison,
+            ...detain([26, 27, 28, 29, 30], registeredOutput('running', 0)),
+        };
+
+        expect(select({ prison })).toEqual(prison);
     });
 });
