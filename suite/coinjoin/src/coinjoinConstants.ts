@@ -19,6 +19,7 @@ export const CLIENT_ENABLE_FAILED = '@coinjoin/client-enable-failed' as const;
 export const CLIENT_STATUS = '@coinjoin/client-status' as const;
 export const CLIENT_SESSION_PHASE = '@coinjoin/session-phase' as const;
 export const CLIENT_PRISON_EVENT = '@coinjoin/prison-event' as const;
+export const CHOOSE_COORDINATOR = '@coinjoin/choose-coordinator' as const;
 
 export const SESSION_STARTING = '@coinjoin/session-starting' as const;
 export const SESSION_PAUSE = '@coinjoin/session-pause' as const;

@@ -1,6 +1,7 @@
 import { type UnknownAction, isAnyOf } from '@reduxjs/toolkit';
 
 import {
+    chooseCoordinator,
     clientOnPrisonEvent,
     isCoinjoinAccountPersistenceAction,
     setDebugSettings,
@@ -629,6 +630,8 @@ export const prepareStorageMiddleware = createMiddlewareWithExtraDeps<
         api.dispatch(storageActions.saveMetadataSettingsThunk());
     } else if (setDebugSettings.match(action)) {
         api.dispatch(storageActions.saveCoinjoinDebugSettingsThunk());
+    } else if (chooseCoordinator.match(action)) {
+        api.dispatch(storageActions.saveCoinjoinCoordinatorSettingsThunk());
     } else if (clientOnPrisonEvent.match(action)) {
         // Not a rememberedDeviceHandlers entry: unlike those handlers (one action ->
         // one device), this one action affects multiple accounts on potentially

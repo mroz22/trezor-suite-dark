@@ -9813,6 +9813,41 @@ export const messages = defineMessages({
         defaultMessage:
             'Skipping rounds makes it more difficult to trace your inputs, helping further obscure the origin of the funds.',
     },
+    TR_COINJOIN_COORDINATOR: {
+        id: 'TR_COINJOIN_COORDINATOR',
+        description: 'Heading of the coordinator section in coinjoin settings',
+        defaultMessage: 'Coordinator',
+    },
+    TR_COINJOIN_COORDINATOR_DESCRIPTION: {
+        id: 'TR_COINJOIN_COORDINATOR_DESCRIPTION',
+        description: 'Description of the coordinator section in coinjoin settings',
+        defaultMessage:
+            'The coordinator runs the coinjoin rounds. All Privacy accounts of this network mix through it.',
+    },
+    TR_COINJOIN_COORDINATOR_CHANGE_DISABLED: {
+        id: 'TR_COINJOIN_COORDINATOR_CHANGE_DISABLED',
+        description:
+            'Shown under the disabled coordinator choice in coinjoin settings while a coinjoin session of the network exists',
+        defaultMessage: 'Stop coinjoin in all Privacy accounts to choose another coordinator.',
+    },
+    TR_COINJOIN_COORDINATOR_IDENTIFIER: {
+        id: 'TR_COINJOIN_COORDINATOR_IDENTIFIER',
+        description:
+            'Label of the coordinator identifier (WabiSabi CoordinationIdentifier) in coinjoin settings',
+        defaultMessage: 'Identifier',
+    },
+    TR_COINJOIN_COORDINATOR_FEE_RATE_CAP: {
+        id: 'TR_COINJOIN_COORDINATOR_FEE_RATE_CAP',
+        description:
+            'Label of the highest coordinator fee rate a coinjoin session authorizes, in coinjoin settings',
+        defaultMessage: 'Highest coordinator fee',
+    },
+    TR_COINJOIN_COORDINATOR_MIN_INPUT_COUNT: {
+        id: 'TR_COINJOIN_COORDINATOR_MIN_INPUT_COUNT',
+        description:
+            'Label of the fewest inputs a coinjoin round needs, in coinjoin settings; rounds with fewer are skipped',
+        defaultMessage: 'Fewest inputs in a round',
+    },
     TR_MAX_MINING_FEE: {
         id: 'TR_MAX_MINING_FEE',
         description: 'Coinjoin strategy item - fee amount',

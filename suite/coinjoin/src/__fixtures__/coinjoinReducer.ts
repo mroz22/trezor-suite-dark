@@ -24,6 +24,50 @@ const account = {
 
 export const actionFixtures = [
     {
+        description: 'chooseCoordinator keeps the coordinator chosen per network',
+        initialState,
+        actions: [
+            {
+                type: COINJOIN.CHOOSE_COORDINATOR,
+                payload: { symbol: 'btc', coordinatorUrl: 'https://first.example/wabisabi/' },
+            },
+            {
+                type: COINJOIN.CHOOSE_COORDINATOR,
+                payload: { symbol: 'test', coordinatorUrl: 'https://test.example/wabisabi/' },
+            },
+            {
+                type: COINJOIN.CHOOSE_COORDINATOR,
+                payload: { symbol: 'btc', coordinatorUrl: 'https://second.example/wabisabi/' },
+            },
+        ],
+        result: {
+            ...initialState,
+            chosenCoordinatorUrls: {
+                btc: 'https://second.example/wabisabi/',
+                test: 'https://test.example/wabisabi/',
+            },
+        },
+    },
+    {
+        description: 'storage load restores the chosen coordinators',
+        initialState,
+        actions: [
+            {
+                type: '@storage/load',
+                payload: {
+                    coinjoinAccounts: [],
+                    coinjoinCoordinatorSettings: {
+                        chosenCoordinatorUrls: { btc: 'https://second.example/wabisabi/' },
+                    },
+                },
+            },
+        ],
+        result: {
+            ...initialState,
+            chosenCoordinatorUrls: { btc: 'https://second.example/wabisabi/' },
+        },
+    },
+    {
         description: 'updateSessionPhase initial',
         initialState: {
             ...initialState,

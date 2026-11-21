@@ -10,11 +10,19 @@ import { createIpcProxy } from '@trezor/ipc-proxy';
 import type { CoinjoinNetworksConfig, CoinjoinSymbol } from './config';
 import { getCoinjoinConfig } from './config';
 
+const loadClient = (settings: CoinjoinNetworksConfig) => {
+    if (isDesktop()) {
+        return createIpcProxy<CoinjoinClient>('CoinjoinClient', { target: { settings } }, settings);
+    }
+
+    throw new Error('Coinjoin supported only in Suite Desktop');
+};
+
 const loadInstance = (settings: ReturnType<typeof getCoinjoinConfig>) => {
     if (isDesktop()) {
         return Promise.all([
             createIpcProxy<CoinjoinBackend>('CoinjoinBackend', { target: { settings } }, settings),
-            createIpcProxy<CoinjoinClient>('CoinjoinClient', { target: { settings } }, settings),
+            loadClient(settings),
         ] as const);
     }
 
@@ -32,6 +40,12 @@ type CoinjoinCreateInstance = {
     settings?: CoinjoinNetworksConfig;
 };
 
+type ReplaceClientParams = {
+    symbol: CoinjoinSymbol;
+    prison?: CoinjoinPrisonInmate[];
+    settings: CoinjoinNetworksConfig;
+};
+
 export class CoinjoinService {
     private static instances: Record<NetworkSymbol, CoinjoinServiceInstance> = {};
 
@@ -42,6 +56,27 @@ export class CoinjoinService {
         const instance = { backend, client };
 
         this.instances[symbol] = instance;
+
+        return instance;
+    }
+
+    // Replaces the client of an existing instance, for example for another coordinator. The backend
+    // does not use the coordinator, so it keeps running and account scanning is not interrupted.
+    // The instance object stays the same, so whoever holds it uses the new client from now on.
+    static async replaceClient({ symbol, prison, settings }: ReplaceClientParams) {
+        const instance = this.instances[symbol];
+        if (!instance) return;
+        // The new client is created first, so the main process keeps the coinjoin middleware running.
+        const client = await loadClient({ ...settings, prison });
+        // Removed meanwhile.
+        if (this.instances[symbol] !== instance) {
+            client.disable();
+
+            return;
+        }
+        const previousClient = instance.client;
+        instance.client = client;
+        previousClient.disable();
 
         return instance;
     }
