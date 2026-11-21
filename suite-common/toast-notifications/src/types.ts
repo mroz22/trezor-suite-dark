@@ -185,6 +185,7 @@ export type ToastPayload<TranslationKey extends UnknownTranslationKey = UnknownT
               | 'copy-to-clipboard'
               | 'tor-is-slow'
               | 'coinjoin-interrupted'
+              | 'coinjoin-coordinator-misbehavior'
               | 'firmware-language-changed'
               | 'firmware-language-fetch-error'
               | 'estimated-fee-error'

@@ -567,6 +567,12 @@ export const NotificationRenderer = ({
                 values: { error: notification.error },
             });
 
+        case 'coinjoin-coordinator-misbehavior':
+            return renderNotificationView(render, notification, {
+                variant: 'error',
+                message: 'TR_SESSION_ERROR_PHASE_COORDINATOR_MISBEHAVIOR',
+            });
+
         // Events:
         case AUTH_DEVICE:
             return renderNotificationView(render, notification, {
