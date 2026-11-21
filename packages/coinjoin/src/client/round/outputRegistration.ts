@@ -6,6 +6,7 @@ import type { AliceShape } from '../../types/alice';
 import * as coordinator from '../coordinator';
 import * as middleware from '../middleware';
 import { type Bob, outputDecomposition } from './outputDecomposition';
+import { verifyRoundInputs } from './verifyRoundInputs';
 import type { CoinjoinRoundOptions, CoinjoinRoundShape } from '../../types/round';
 import { scheduleDelay } from '../../utils/roundUtils';
 import type { Account } from '../Account';
@@ -147,6 +148,8 @@ export const outputRegistration = async (
     // - decide if there is only 1 account registered should i abaddon this round and blame it on some "youngest" input?
     // - maybe if there is only 1 account inputs are so "far away" from each other that it is wort to mix anyway?
     try {
+        verifyRoundInputs(round, options);
+
         round.setSessionPhase(SessionPhase.RegisteringOutputs);
         // decompose output amounts for all registered inputs grouped by Account
         const decomposedGroup = await outputDecomposition(round, accounts, options);

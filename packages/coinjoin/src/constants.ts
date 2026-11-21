@@ -33,6 +33,16 @@ export const ROUND_SELECTION_REGISTRATION_OFFSET = 30000;
 // max output count
 export const ROUND_SELECTION_MAX_OUTPUTS = 20;
 
+// Default of CoinjoinClientSettings.minInputCount, following WalletWasabi
+// Constants.DefaultAbsoluteMinInputCount (mainnet) and Constants.AbsoluteMinInputCount (its test
+// networks).
+// https://github.com/WalletWasabi/WalletWasabi/blob/0ff7c2b254/WalletWasabi/Helpers/Constants.cs#L63-L64
+export const ROUND_MIN_INPUT_COUNT = {
+    btc: 21,
+    test: 2,
+    regtest: 2,
+} as const;
+
 // custom timeout for websocket opening
 export const WS_CONNECT_TIMEOUT = 15000;
 

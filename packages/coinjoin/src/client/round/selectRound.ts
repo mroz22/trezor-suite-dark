@@ -1,3 +1,4 @@
+import type { Logger } from '@trezor/logger';
 import { arrayPartition, arrayToDictionary } from '@trezor/utils';
 
 import { ROUND_SELECTION_MAX_OUTPUTS, ROUND_SELECTION_REGISTRATION_OFFSET } from '../../constants';
@@ -24,6 +25,25 @@ export interface SelectRoundProps {
     options: CoinjoinRoundOptions;
 }
 
+type ReleaseRefusedBlameRoundParams = Pick<SelectRoundProps, 'prison'> & {
+    blameOf: string;
+    logger: Logger;
+};
+
+// Inputs waiting for a blame round keep all accounts out of regular rounds (see
+// selectInputsForRound), release them when their blame round is refused.
+const releaseRefusedBlameRound = ({ blameOf, prison, logger }: ReleaseRefusedBlameRoundParams) => {
+    if (!prison.getBlameOfInmates().some(inmate => inmate.roundId === blameOf)) return;
+
+    logger.info(`Releasing inputs waiting for a refused blame round of ~~${blameOf}~~`);
+    prison.releaseBlameOfInmates(blameOf);
+};
+
+// Ids of skipped rounds which were already logged. Rounds are listed by the status for minutes
+// and getRoundCandidates runs on every status update.
+const loggedSkippedRounds = new Set<string>();
+const LOGGED_SKIPPED_ROUNDS_LIMIT = 100;
+
 // Basic preselect CoinjoinRound candidates
 // reuse existing CoinjoinRounds or create new one
 export const getRoundCandidates = ({
@@ -34,6 +54,7 @@ export const getRoundCandidates = ({
     prison,
 }: Omit<SelectRoundProps, 'aliceGenerator' | 'accounts'>) => {
     const now = Date.now();
+    const { logger, minInputCount } = options;
 
     return statusRounds
         .filter(
@@ -52,6 +73,25 @@ export const getRoundCandidates = ({
                 // constructor fails on invalid round data (highly unlikely)
                 return [];
             }
+        })
+        .filter(round => {
+            // MinInputCountByRound is not part of the round id, so it only preselects rounds.
+            // verifyRoundInputs checks the actual inputs.
+            const { MinInputCountByRound } = round.roundParameters;
+            if (MinInputCountByRound >= minInputCount) return true;
+
+            if (!loggedSkippedRounds.has(round.id)) {
+                if (loggedSkippedRounds.size >= LOGGED_SKIPPED_ROUNDS_LIMIT) {
+                    loggedSkippedRounds.clear();
+                }
+                loggedSkippedRounds.add(round.id);
+                logger.info(
+                    `Skipping round ~~${round.id}~~. Min input count ${MinInputCountByRound} is below ${minInputCount}`,
+                );
+            }
+            releaseRefusedBlameRound({ blameOf: round.blameOf, prison, logger });
+
+            return false;
         });
 };
 
