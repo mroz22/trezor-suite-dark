@@ -20,8 +20,10 @@ import {
 import { type Account, type AccountKey, AddressDisplayOptions } from '@suite-common/wallet-types';
 import { getUtxoOutpoint } from '@suite-common/wallet-utils';
 import {
+    type CoinjoinClient,
     type CoinjoinClientEvents,
     type CoinjoinClientVersion,
+    type CoinjoinPrisonInmate,
     type CoinjoinRequestEvent,
     type CoinjoinResponseEvent,
     type CoinjoinRoundEvent,
@@ -40,7 +42,7 @@ import {
     type CoinjoinRootState,
     selectCoinjoinAccounts,
     selectCoinjoinClients,
-    selectCoinjoinDebug,
+    selectCoinjoinNetworkConfig,
     selectRoundsDurationInHours,
     selectRoundsLeftByAccountKey,
     selectRoundsNeededByAccountKey,
@@ -54,7 +56,7 @@ import {
     isCoinjoinSupportedSymbol,
     prepareCoinjoinTransaction,
 } from './coinjoinUtils';
-import { type CoinjoinSymbol, getCoinjoinConfig } from './config';
+import { type CoinjoinSymbol } from './config';
 
 const clientEnable = createAction(COINJOIN.CLIENT_ENABLE, (symbol: Account['symbol']) => ({
     payload: { symbol },
@@ -799,14 +801,76 @@ export const onCoinjoinClientRequest = (data: CoinjoinRequestEvent[]) => (dispat
         }),
     );
 
+// Restores the prison of a new client from the coinjoin accounts of its network, without outdated
+// inmates.
+const getClientPrison = (
+    state: AccountsRootState & CoinjoinRootState,
+    symbol: CoinjoinSymbol,
+): CoinjoinPrisonInmate[] =>
+    selectCoinjoinAccounts(state)
+        .filter(account => account.symbol === symbol && account.prison)
+        .flatMap(account => {
+            const realAccount = selectAccountByKey(state, account.key);
+            if (!realAccount) return [];
+
+            const utxos = realAccount.utxo!.map(getUtxoOutpoint);
+            const changeUpToLastUsed = new Set(
+                getChangeAddressesUpToLastUsed(realAccount.addresses!.change).map(a => a.address),
+            );
+
+            return Object.entries(account.prison ?? {}).flatMap(([id, inmate]) => {
+                // clear outdated info with Infinity sentence
+                if (inmate.sentenceEnd === Infinity) {
+                    // utxos which are no longer in account (spent utxos)
+                    if (inmate.type === 'input' && !utxos.includes(id)) {
+                        return [];
+                    }
+                    // change addresses which the client no longer gets (used, skipped or
+                    // registered in failed rounds)
+                    if (inmate.type === 'output' && changeUpToLastUsed.has(id)) {
+                        return [];
+                    }
+                }
+
+                return {
+                    id,
+                    accountKey: account.key,
+                    ...inmate,
+                };
+            });
+        });
+
+// Enables a new client of the network and handles its events.
+const enableClientThunk =
+    (symbol: CoinjoinSymbol, client: CoinjoinClient) => async (dispatch: Dispatch) => {
+        const status = await client.enable();
+        // handle status change
+        client.on('status', status => dispatch(clientOnStatusEvent(symbol, status)));
+        // handle prison event
+        client.on('prison', event => dispatch(clientOnPrisonEvent(event)));
+        // handle active round change
+        client.on('round', event => dispatch(onCoinjoinRoundChangedThunk(event)));
+        // handle requests (ownership proof, sign transaction)
+        client.on('request', async data => {
+            const response = await dispatch(onCoinjoinClientRequest(data));
+            client.resolveRequest(response);
+        });
+        // handle session phase change
+        client.on('session-phase', event => dispatch(clientSessionPhase(event)));
+
+        if (!status.success) {
+            dispatch(clientEnableFailed(symbol));
+        } else {
+            dispatch(clientEnableSuccess(symbol, status));
+        }
+    };
+
 type InitCoinjoinServiceThunkState = AccountsRootState & CoinjoinRootState & MessageSystemRootState;
 
 export const initCoinjoinServiceThunk =
     (symbol: Account['symbol']) =>
     async (dispatch: Dispatch, getState: () => InitCoinjoinServiceThunkState) => {
         const clients = selectCoinjoinClients(getState());
-        const debug = selectCoinjoinDebug(getState());
-        const accounts = selectCoinjoinAccounts(getState());
 
         if (!isCoinjoinSupportedSymbol(symbol)) return;
 
@@ -835,80 +899,23 @@ export const initCoinjoinServiceThunk =
             return knownService;
         }
 
-        const environment = debug?.coinjoinServerEnvironment?.[symbol];
-
         // or start new instance
         dispatch(clientEnable(symbol));
 
-        // restore CoinjoinPrison initialState
-        const prison = accounts
-            .filter(account => account.symbol === symbol && account.prison)
-            .flatMap(account => {
-                const realAccount = selectAccountByKey(getState(), account.key);
-                if (!realAccount) return [];
-
-                const utxos = realAccount.utxo!.map(getUtxoOutpoint);
-                const changeUpToLastUsed = new Set(
-                    getChangeAddressesUpToLastUsed(realAccount.addresses!.change).map(
-                        a => a.address,
-                    ),
-                );
-
-                return Object.entries(account.prison ?? {}).flatMap(([id, inmate]) => {
-                    // clear outdated info with Infinity sentence
-                    if (inmate.sentenceEnd === Infinity) {
-                        // utxos which are no longer in account (spent utxos)
-                        if (inmate.type === 'input' && !utxos.includes(id)) {
-                            return [];
-                        }
-                        // change addresses which the client no longer gets (used, skipped or
-                        // registered in failed rounds)
-                        if (inmate.type === 'output' && changeUpToLastUsed.has(id)) {
-                            return [];
-                        }
-                    }
-
-                    return {
-                        id,
-                        accountKey: account.key,
-                        ...inmate,
-                    };
-                });
-            });
+        const prison = getClientPrison(getState(), symbol);
 
         try {
-            const config = getCoinjoinConfig(symbol, environment);
             const service = await CoinjoinService.createInstance({
                 symbol,
                 prison,
-                settings: { ...config, ...debug?.coinjoinConfigOverride?.[symbol] },
+                settings: selectCoinjoinNetworkConfig(getState(), symbol),
             });
             if (isCoinjoinDisabledByFeatureFlag) {
                 dispatch(clientEnableFailed(symbol));
 
                 return service;
             }
-            const { client } = service;
-            const status = await client.enable();
-            // handle status change
-            client.on('status', status => dispatch(clientOnStatusEvent(symbol, status)));
-            // handle prison event
-            client.on('prison', event => dispatch(clientOnPrisonEvent(event)));
-            // handle active round change
-            client.on('round', event => dispatch(onCoinjoinRoundChangedThunk(event)));
-            // handle requests (ownership proof, sign transaction)
-            client.on('request', async data => {
-                const response = await dispatch(onCoinjoinClientRequest(data));
-                client.resolveRequest(response);
-            });
-            // handle session phase change
-            client.on('session-phase', event => dispatch(clientSessionPhase(event)));
-
-            if (!status.success) {
-                dispatch(clientEnableFailed(symbol));
-            } else {
-                dispatch(clientEnableSuccess(symbol, status));
-            }
+            await dispatch(enableClientThunk(symbol, service.client));
 
             return service;
         } catch (error) {
