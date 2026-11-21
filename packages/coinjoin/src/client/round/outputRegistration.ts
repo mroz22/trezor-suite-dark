@@ -50,13 +50,19 @@ const registerOutput = async (
         { signal, baseUrl: middlewareUrl },
     );
 
-    // TODO: tricky, if for some reason AlreadyRegisteredScript is called then we have 2 options:
-    // - try again with different address and link my new address with old address (privacy loss against coordinator?)
-    // - intentionally stop output registrations for all other credentials. Question: which input will be banned if i call readyToSign on each anyway? is it better to break here and not to proceed to signing?
-    const tryToRegisterOutput = (useDelay = true): Promise<AccountAddress> => {
-        const address = changeAddresses.find(
-            a => !round.prison.isDetained(a.address) && !assignedAddresses.includes(a),
-        );
+    const isUnassigned = (address: AccountAddress) => !assignedAddresses.includes(address);
+    // A blame round registers again the outputs this account registered in the failed round, as
+    // WalletWasabi does. Fresh ones would set the outputs of this client apart.
+    const isReusable = ({ address }: AccountAddress) =>
+        round.prison.isReusableOutput({ address, accountKey, roundId: round.blameOf });
+
+    // The retry after AlreadyRegisteredScript presents the same credentials with another address,
+    // which links both for the coordinator. Retry once only, as the coordinator could otherwise
+    // reject all addresses of the account. WalletWasabi does not retry.
+    const tryToRegisterOutput = (isRetry = false): Promise<AccountAddress> => {
+        const address =
+            changeAddresses.find(a => isUnassigned(a) && isReusable(a)) ??
+            changeAddresses.find(a => isUnassigned(a) && !round.prison.isDetained(a.address));
         if (!address) {
             const detained = changeAddresses.filter(a => round.prison.isDetained(a.address));
             logger.error(
@@ -66,6 +72,8 @@ const registerOutput = async (
         }
 
         assignedAddresses.push(address);
+        // Before the request, the coordinator may keep the output even if the request fails.
+        round.prison.detainRegisteredOutput({ ...address, accountKey }, round.id);
 
         return coordinator
             .outputRegistration(
@@ -77,7 +85,7 @@ const registerOutput = async (
                     signal,
                     baseUrl: coordinatorUrl,
                     identity: getWeakRandomId(10),
-                    delay: useDelay ? delay : 0, // do not use delay if registration is repeated
+                    delay: isRetry ? 0 : delay,
                     deadline: round.phaseDeadline,
                 },
             )
@@ -94,7 +102,7 @@ const registerOutput = async (
                             },
                         );
 
-                        return tryToRegisterOutput(false);
+                        if (!isRetry) return tryToRegisterOutput(true);
                     }
                     if (error.errorCode === WabiSabiProtocolErrorCode.NotEnoughFunds) {
                         // @ts-expect-error: indexing with noUncheckedIndexedAccess
@@ -110,13 +118,6 @@ const registerOutput = async (
     };
 
     const address = await tryToRegisterOutput();
-    round.prison.detain(
-        { ...address, accountKey },
-        {
-            roundId: round.id,
-            errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
-        },
-    );
 
     // The coordinator pays the presented amount credentials minus the mining fee for the output
     // size (WalletWasabi Bob.CalculateOutputAmount with NBitcoin FeeRate.GetFee). Expect the fee

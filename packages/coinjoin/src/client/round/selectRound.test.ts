@@ -11,6 +11,7 @@ import { ROUND_SELECTION_MAX_OUTPUTS } from '../../constants';
 import { SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
 import type { AliceGenerator } from '../../types/alice';
 import type { CoinjoinRoundParameters, Round } from '../../types/coordinator';
+import type { CoinjoinPrisonInmate } from '../../types/prison';
 import type { CoinjoinRoundGenerator } from '../../types/round';
 import { Alice } from '../Alice';
 import { CoinjoinPrison } from '../CoinjoinPrison';
@@ -421,6 +422,7 @@ describe('selectRound', () => {
     it('no available Accounts', () => {
         const result = getAccountCandidates({
             accounts: [],
+            statusRounds: [],
             coinjoinRounds: [],
             prison,
             options: server?.requestOptions,
@@ -431,6 +433,7 @@ describe('selectRound', () => {
     it('no available utxos', () => {
         const result = getAccountCandidates({
             accounts: [{ ...ACCOUNT, utxos: [] }],
+            statusRounds: [],
             coinjoinRounds: [],
             prison,
             options: server?.requestOptions,
@@ -443,6 +446,7 @@ describe('selectRound', () => {
 
         const result = getAccountCandidates({
             accounts: [{ ...ACCOUNT, utxos: [{ outpoint: 'Ba99ed', anonymityLevel: 1 }] }],
+            statusRounds: [],
             coinjoinRounds: [],
             prison,
             options: server?.requestOptions,
@@ -453,6 +457,7 @@ describe('selectRound', () => {
     it('utxo already registered in CoinjoinRound', () => {
         const result = getAccountCandidates({
             accounts: [{ ...ACCOUNT, utxos: [{ outpoint: 'AA', anonymityLevel: 1 }] }],
+            statusRounds: [],
             coinjoinRounds: [
                 {
                     id: '00',
@@ -488,6 +493,7 @@ describe('selectRound', () => {
         const result = new Array(5).fill(0, 0, 5).flatMap(() =>
             getAccountCandidates({
                 accounts,
+                statusRounds: [],
                 coinjoinRounds: [],
                 prison,
                 options: server?.requestOptions,
@@ -496,6 +502,151 @@ describe('selectRound', () => {
 
         // skipped at least once
         expect(result.length).toBeLessThan(5); // should be 4 but there is always 20% chance that will be 3
+    });
+
+    describe('change addresses of the account', () => {
+        const CHANGE_ADDRESSES = Array.from({ length: 20 }, (_, index) => ({
+            address: `bc1p${index}`,
+        }));
+        const createInmates = (
+            addresses: number[],
+            inmate: Omit<CoinjoinPrisonInmate, 'id' | 'type'>,
+        ): CoinjoinPrisonInmate[] =>
+            addresses.map(index => ({ ...inmate, id: `bc1p${index}`, type: 'output' }));
+        const getCandidates = (
+            inmates: CoinjoinPrisonInmate[],
+            {
+                account = {},
+                statusRounds = [],
+            }: { account?: Partial<typeof ACCOUNT>; statusRounds?: Round[] } = {},
+        ) => {
+            const accountPrison = new CoinjoinPrison(inmates);
+            const logger = { ...noopLogger, info: jest.fn() };
+            const setSessionPhase = jest.fn();
+            const candidates = getAccountCandidates({
+                accounts: [{ ...ACCOUNT, changeAddresses: CHANGE_ADDRESSES, ...account }],
+                statusRounds,
+                coinjoinRounds: [],
+                prison: accountPrison,
+                options: { ...server?.requestOptions, logger, setSessionPhase },
+            });
+
+            return { candidates, accountPrison, logger, setSessionPhase };
+        };
+        const BROADCAST = {
+            accountKey: 'account-A',
+            sentenceStart: 1000,
+            sentenceEnd: Infinity,
+            errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+            roundId: 'B'.repeat(64),
+        };
+        const registeredInRound = (roundId: string, sentenceStart: number) => ({
+            accountKey: 'account-A',
+            sentenceStart,
+            sentenceEnd: Infinity,
+            errorCode: 'registeredOutput' as const,
+            roundId,
+        });
+
+        it('need 10 free ones', () => {
+            const account = { changeAddresses: CHANGE_ADDRESSES.slice(0, 10) };
+            expect(getCandidates([], { account }).candidates).toHaveLength(1);
+
+            const { candidates, setSessionPhase } = getCandidates(
+                createInmates([0], {
+                    accountKey: 'account-A',
+                    sentenceStart: Date.now(),
+                    sentenceEnd: Date.now() + 60000,
+                }),
+                { account },
+            );
+            expect(candidates).toEqual([]);
+            expect(setSessionPhase).toHaveBeenCalledWith({
+                phase: SessionPhase.SkippingRound,
+                accountKeys: ['account-A'],
+            });
+        });
+
+        it('are recycled from the oldest failed rounds until 10 are free', () => {
+            const inmates = [
+                ...createInmates([0, 1, 2, 3], BROADCAST), // oldest, broadcast
+                // rejected by the coordinator with AlreadyRegisteredScript
+                ...createInmates([4], { ...BROADCAST, sentenceStart: 1500, roundId: undefined }),
+                ...createInmates([5, 6, 7, 8], registeredInRound('01', 2000)),
+                ...createInmates([9, 10, 11], registeredInRound('02', 3000)),
+                ...createInmates([12, 13, 14], registeredInRound('03', 4000)),
+                // the oldest failed round, its address is no longer among the change addresses
+                { ...registeredInRound('00', 500), id: 'bc1p99', type: 'output' as const },
+            ];
+
+            const { candidates, accountPrison, logger } = getCandidates(inmates);
+
+            expect(candidates).toHaveLength(1);
+            expect(logger.info).toHaveBeenCalledWith(
+                'Recycling 7 change addresses of 2 failed rounds of ~~account-A~~',
+            );
+            expect(accountPrison.inmates.map(({ id }) => id)).toEqual([
+                ...['bc1p0', 'bc1p1', 'bc1p2', 'bc1p3', 'bc1p4'],
+                ...['bc1p12', 'bc1p13', 'bc1p14', 'bc1p99'],
+            ]);
+        });
+
+        it('of a broadcast transaction are never recycled', () => {
+            const inmates = [
+                ...createInmates([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], BROADCAST),
+                ...createInmates([11], registeredInRound('01', 2000)),
+            ];
+
+            const { candidates, accountPrison, setSessionPhase } = getCandidates(inmates);
+
+            // 8 free ones and 1 recyclable one are too few, none is recycled
+            expect(candidates).toEqual([]);
+            expect(accountPrison.inmates).toEqual(inmates);
+            expect(setSessionPhase).toHaveBeenCalledWith({
+                phase: SessionPhase.SkippingRound,
+                accountKeys: ['account-A'],
+            });
+        });
+
+        it('of a round in the status are not recycled', () => {
+            const inmates = [
+                ...createInmates([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], registeredInRound('01', 2000)),
+                ...createInmates([10, 11, 12], registeredInRound('02', 3000)),
+                ...createInmates([13, 14], registeredInRound('03', 4000)),
+            ];
+
+            const { candidates, accountPrison, logger } = getCandidates(inmates, {
+                statusRounds: [{ ...DEFAULT_ROUND, Id: '01' }],
+            });
+
+            expect(candidates).toHaveLength(1);
+            expect(logger.info).toHaveBeenCalledWith(
+                'Recycling 5 change addresses of 2 failed rounds of ~~account-A~~',
+            );
+            expect(accountPrison.inmates).toEqual(inmates.slice(0, 10));
+        });
+
+        it.each([
+            ['without available utxos', { utxos: [] }, SessionPhase.AccountMissingUtxos],
+            [
+                'skipping the round',
+                { skipRounds: [4, 5], skipRoundCounter: 4 },
+                SessionPhase.SkippingRound,
+            ],
+        ])('are not recycled for an account %s', (_, account, phase) => {
+            const inmates = createInmates(
+                [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                registeredInRound('01', 2000),
+            );
+
+            const { candidates, accountPrison, setSessionPhase } = getCandidates(inmates, {
+                account,
+            });
+
+            expect(candidates).toEqual([]);
+            expect(accountPrison.inmates).toEqual(inmates);
+            expect(setSessionPhase).toHaveBeenCalledWith({ phase, accountKeys: ['account-A'] });
+        });
     });
 
     it('middleware/select-inputs-for-round throws error', async () => {

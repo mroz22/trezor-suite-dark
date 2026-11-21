@@ -9,6 +9,7 @@ import { type AnonymitySet } from '@trezor/blockchain-link';
 import {
     type CoinjoinStatusEvent,
     type CoinjoinTransactionData,
+    DISCOVERY_LOOKOUT,
     type RegisterAccountParams,
     RoundPhase,
     SessionPhase,
@@ -161,9 +162,51 @@ const getCoinjoinAccountUtxos = (
             anonymityLevel: anonymitySet[utxo.address],
         })) || [];
 
-// select only addresses without tx history
-const getCoinjoinAccountAddresses = (addresses: Account['addresses']) =>
-    addresses?.change?.filter(a => !a.transfers) || [];
+type ChangeAddress = NonNullable<Account['addresses']>['change'][number];
+
+const getAddressIndex = ({ path }: ChangeAddress) => Number(path.slice(path.lastIndexOf('/') + 1));
+
+// Index of the last change address with a transaction, -1 if there is none. Only confirmed
+// transactions count (getAccountInfo in @trezor/coinjoin).
+const getLastUsedChangeIndex = (change: ChangeAddress[]) =>
+    change.reduce(
+        (lastUsedIndex, address) =>
+            address.transfers > 0
+                ? Math.max(lastUsedIndex, getAddressIndex(address))
+                : lastUsedIndex,
+        -1,
+    );
+
+/**
+ * Change addresses up to the last used one. The client never registers outputs to them, see
+ * getCoinjoinAccountAddresses.
+ */
+export const getChangeAddressesUpToLastUsed = (change: ChangeAddress[]) => {
+    const lastUsedIndex = getLastUsedChangeIndex(change);
+
+    return change.filter(address => getAddressIndex(address) <= lastUsedIndex);
+};
+
+// The client registers outputs only to the DISCOVERY_LOOKOUT addresses after the last used one, so
+// that a wallet which discovers the account with the common gap limit of 20 finds every output.
+// Unused addresses below it were skipped or registered in a failed round. The last used address
+// does not move on an unconfirmed coinjoin, which only keeps the window lower. Addresses with an
+// unconfirmed output are left out, a broadcast coinjoin pays them.
+const getCoinjoinAccountAddresses = ({ addresses, utxo }: Pick<Account, 'addresses' | 'utxo'>) => {
+    const change = addresses?.change ?? [];
+    const lastUsedIndex = getLastUsedChangeIndex(change);
+    const addressesWithUtxo = new Set(utxo?.map(({ address }) => address));
+
+    return change.filter(address => {
+        const index = getAddressIndex(address);
+
+        return (
+            index > lastUsedIndex &&
+            index <= lastUsedIndex + DISCOVERY_LOOKOUT &&
+            !addressesWithUtxo.has(address.address)
+        );
+    });
+};
 
 type GetRegisterAccountParamsOptions = { session: CoinjoinSessionParameters } & Pick<
     CoinjoinAccount,
@@ -186,7 +229,7 @@ export const getRegisterAccountParams = (
     maxFeePerKvbyte: session.maxFeePerKvbyte,
     maxCoordinatorFeeRate: session.maxCoordinatorFeeRate,
     utxos: getCoinjoinAccountUtxos(account.utxo, account.addresses?.anonymitySet),
-    changeAddresses: getCoinjoinAccountAddresses(account.addresses),
+    changeAddresses: getCoinjoinAccountAddresses(account),
 });
 
 const getSkipRoundsRate = (skipRounds?: [number, number]) =>

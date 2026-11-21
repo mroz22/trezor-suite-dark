@@ -18,6 +18,17 @@ export const ended = (round: CoinjoinRoundShape, { logger, network }: CoinjoinRo
     const endRoundKey = enumUtils.getKeyByValue(EndRoundState, round.endRoundState);
     logger.info(`Ending round ~~${round.id}~~. End state: ${endRoundKey}`);
 
+    // Outputs of a transaction signed here. Not 'registeredOutput', a blame round may not reuse
+    // them and they are never recycled.
+    const detainTransactionOutputs = () =>
+        addresses.forEach(addr =>
+            prison.detain(addr, {
+                roundId: id,
+                errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+                sentenceEnd: Infinity,
+            }),
+        );
+
     // check if Round was not signed by this instance.
     // possible edge cases:
     // - Round in critical phase awaits for Status phase change but update is not provided because of network problems.
@@ -47,13 +58,13 @@ export const ended = (round: CoinjoinRoundShape, { logger, network }: CoinjoinRo
         // assume that inputs are not banned but just noted.
         // all depends on the coordinator `AllowNotedInputRegistration` flag which is not visible in the Status
         // https://github.com/zkSNACKs/WalletWasabi/blob/master/WalletWasabi/WabiSabi/Backend/Rounds/Arena.Partial.cs#L414
-        // give used inputs/outputs some random cool off time and try again,
-        // repeated input-registration will tell if they are really banned,
-        // make sure that addresses registered in round are recycled (reset Infinity sentence)
+        // give used inputs some random cool off time and try again,
+        // repeated input-registration will tell if they are really banned.
+        // Registered addresses stay detained, see CoinjoinPrison.detainRegisteredOutput.
         const minute = 60 * 1000;
         const sentenceEnd = getWeakRandomNumberInRange(5 * minute, 10 * minute);
-        [...inputs, ...addresses].forEach(vinvout =>
-            prison.detain(vinvout, {
+        inputs.forEach(input =>
+            prison.detain(input, {
                 sentenceEnd,
             }),
         );
@@ -61,9 +72,10 @@ export const ended = (round: CoinjoinRoundShape, { logger, network }: CoinjoinRo
         logger.info('Awaiting blame round');
 
         // The blame round may contain only inputs of the transaction signed here, see
-        // verifyRoundInputs. The coordinator cannot add any to it afterwards.
+        // verifyRoundInputs. The coordinator cannot add any to it afterwards. Registered addresses
+        // stay detained for the blame round, see CoinjoinPrison.detainRegisteredOutput.
         const signedOutpoints = round.transactionData?.inputs.map(({ outpoint }) => outpoint) ?? [];
-        prison.detainForBlameRound([...inputs, ...addresses], id, signedOutpoints);
+        prison.detainForBlameRound(inputs, id, signedOutpoints);
     } else if (endRoundState === EndRoundState.AbortedNotEnoughAlices) {
         prison.releaseRegisteredInmates(id);
     } else if (endRoundState === EndRoundState.TransactionBroadcasted) {
@@ -76,19 +88,20 @@ export const ended = (round: CoinjoinRoundShape, { logger, network }: CoinjoinRo
             }),
         );
 
-        addresses.forEach(addr =>
-            prison.detain(addr, {
-                roundId: id,
-                errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
-                sentenceEnd: Infinity,
-            }),
-        );
+        detainTransactionOutputs();
 
         round.broadcastedTxDetails = getBroadcastedTxDetails({
             coinjoinState: round.coinjoinState,
             transactionData: round.transactionData,
             network,
         });
+    } else if (
+        endRoundState === EndRoundState.TransactionBroadcastFailed &&
+        round.isSignedSuccessfully()
+    ) {
+        // The coordinator reports a failed broadcast once it has all signatures, so it may still
+        // broadcast the transaction, as may anyone it passed it to.
+        detainTransactionOutputs();
     }
 
     return round;
