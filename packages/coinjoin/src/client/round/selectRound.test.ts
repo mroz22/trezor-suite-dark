@@ -139,8 +139,14 @@ describe('selectRound', () => {
 
         it('releases inputs waiting for a skipped blame round', () => {
             const otherBlameOf = '2'.repeat(64);
-            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf);
-            prison.detainForBlameRound([{ accountKey: 'account-B', outpoint: 'BA' }], otherBlameOf);
+            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf, [
+                'AA',
+            ]);
+            prison.detainForBlameRound(
+                [{ accountKey: 'account-B', outpoint: 'BA' }],
+                otherBlameOf,
+                ['BA'],
+            );
 
             const params = {
                 roundGenerator,
@@ -200,10 +206,13 @@ describe('selectRound', () => {
         it('skips regular and blame rounds and releases inputs waiting for them', () => {
             const blameOf = '3'.repeat(64);
             const skippedBlameOf = '4'.repeat(64);
-            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf);
+            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf, [
+                'AA',
+            ]);
             prison.detainForBlameRound(
                 [{ accountKey: 'account-B', outpoint: 'BA' }],
                 skippedBlameOf,
+                ['BA'],
             );
 
             const result = getRoundCandidates({
@@ -243,7 +252,9 @@ describe('selectRound', () => {
                 { CoordinationFeeRate: { ...CoordinationFeeRate, Rate: 0.0031 } },
             ],
         ])('skips the round with a high %s and releases its inputs', async (_, roundParameters) => {
-            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf);
+            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf, [
+                'AA',
+            ]);
 
             const result = await selectRound({
                 roundGenerator,
@@ -266,6 +277,7 @@ describe('selectRound', () => {
                     { accountKey: 'account-B', outpoint: 'BA' },
                 ],
                 blameOf,
+                ['AA', 'BA'],
             );
 
             const result = await selectRound({
@@ -722,12 +734,14 @@ describe('selectRound', () => {
 
         const blameOf = '1'.repeat(64);
 
+        const signedOutpoints = ['AA', 'AB', 'CA'];
         prison.detainForBlameRound(
             [
                 { accountKey: 'account-A', outpoint: 'AA' },
                 { accountKey: 'account-A', outpoint: 'AB' },
             ],
             blameOf,
+            signedOutpoints,
         );
 
         const result = await selectRound({
@@ -759,7 +773,44 @@ describe('selectRound', () => {
             id: '02',
             blameOf,
             inputs: [{ outpoint: 'AA' }, { outpoint: 'AB' }],
+            blameOfOutpoints: signedOutpoints, // the failed round may leave the status
         });
+    });
+
+    it('Skip blame Round and release its inputs if inputs of the failed round are unknown', async () => {
+        const blameOf = '1'.repeat(64);
+        // Prison restored after a restart, the inputs of the failed round are not persisted.
+        const restoredPrison = new CoinjoinPrison([
+            {
+                type: 'input',
+                accountKey: 'account-A',
+                id: 'AA',
+                sentenceStart: Date.now(),
+                sentenceEnd: Date.now() + 60000,
+                errorCode: 'blameOf',
+                roundId: blameOf,
+            },
+        ]);
+
+        const result = await selectRound({
+            roundGenerator,
+            aliceGenerator,
+            accounts: [
+                {
+                    ...ACCOUNT,
+                    accountKey: 'account-A',
+                    utxos: [{ outpoint: 'AA', amount: 5000, anonymityLevel: 1 }],
+                },
+            ],
+            statusRounds: [{ ...DEFAULT_ROUND, Id: '02', BlameOf: blameOf }],
+            coinjoinRounds: [],
+            prison: restoredPrison,
+            options: server?.requestOptions,
+        });
+
+        expect(result).toBeUndefined();
+        // The inputs would keep all accounts out of regular rounds.
+        expect(restoredPrison.inmates).toEqual([]);
     });
 
     it('too many blocked utxos', async () => {

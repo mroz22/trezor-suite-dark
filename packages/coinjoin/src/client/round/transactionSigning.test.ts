@@ -644,6 +644,51 @@ describe('transactionSigning', () => {
                 expect(input.error?.message).toMatch(/No inputs of other participants/);
             });
         });
+
+        describe('blame round', () => {
+            // The pinned inputs (VERIFIED_INPUTS) hold the input of the other participant, so only
+            // the check of the blame round can refuse it.
+            const createBlameSigningRound = (blameOfOutpoints: string[]) => {
+                const round = createSigningRound(
+                    [createInput('account-A', OWN_OUTPOINT, CONFIRMED)],
+                    [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT],
+                );
+                round.blameOf = '1'.repeat(64);
+                round.blameOfOutpoints = blameOfOutpoints;
+
+                return round;
+            };
+
+            it('prepares a transaction with inputs of the failed round', async () => {
+                const response = await transactionSigning(
+                    createBlameSigningRound([OWN_OUTPOINT, OTHER_OUTPOINT, ANOTHER_OUTPOINT]),
+                    ACCOUNTS,
+                    { ...server?.requestOptions, network: networks.bitcoin },
+                );
+
+                response.inputs.forEach(input => {
+                    expect(input.error).toBeUndefined();
+                });
+                expect(response.transactionData?.inputs).toHaveLength(2);
+            });
+
+            it('refuses to sign an input which was not in the failed round', async () => {
+                const round = createBlameSigningRound([OWN_OUTPOINT, ANOTHER_OUTPOINT]);
+                const response = await transactionSigning(round, ACCOUNTS, {
+                    ...server?.requestOptions,
+                    network: networks.bitcoin,
+                });
+
+                expect(response.transactionData).toBeUndefined();
+                expect(round.getRequest()).toBeUndefined(); // nothing to sign on the device
+                response.inputs.forEach(input => {
+                    expect(input.error).toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+                    expect(input.error?.message).toMatch(
+                        /1 inputs of the blame round were not in the failed round/,
+                    );
+                });
+            });
+        });
     });
 
     it('signed successfully with one WitnessAlreadyProvided error', async () => {

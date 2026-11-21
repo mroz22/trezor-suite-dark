@@ -36,6 +36,10 @@ export class CoinjoinPrison
     implements CoinjoinPrisonShape
 {
     inmates: CoinjoinPrisonInmate[] = [];
+    // Inputs of the transactions signed in rounds which ended with NotAllAlicesSign, by round id.
+    // Their blame rounds may contain only these. Kept apart from the inmates, so they are neither
+    // emitted nor persisted and a blame round after a restart is refused.
+    private blameOfOutpoints = new Map<string, readonly string[]>();
     private changeEventThrottle: ImmediateId | TimerId | undefined;
 
     constructor(initialState: CoinjoinPrisonInmate[] = []) {
@@ -107,7 +111,8 @@ export class CoinjoinPrison
         return this.inmates.find(i => i.id === id);
     }
 
-    detainForBlameRound(inmates: DetainObject[], roundId: string) {
+    detainForBlameRound(inmates: DetainObject[], roundId: string, roundOutpoints: string[]) {
+        this.blameOfOutpoints.set(roundId, roundOutpoints);
         inmates.forEach(inmate => {
             this.detain(inmate, {
                 errorCode: 'blameOf',
@@ -120,7 +125,12 @@ export class CoinjoinPrison
         return this.inmates.filter(i => i.errorCode === 'blameOf');
     }
 
+    getBlameOfOutpoints(roundId: string) {
+        return this.blameOfOutpoints.get(roundId);
+    }
+
     releaseBlameOfInmates(roundId: string) {
+        this.blameOfOutpoints.delete(roundId);
         this.inmates = this.inmates.filter(inmate => inmate.roundId !== roundId);
 
         this.dispatchChange();
@@ -143,6 +153,10 @@ export class CoinjoinPrison
     release(rounds: string[]) {
         const now = Date.now();
         const prevLen = this.inmates.length;
+
+        this.blameOfOutpoints.forEach((_, roundId) => {
+            if (!rounds.includes(roundId)) this.blameOfOutpoints.delete(roundId);
+        });
 
         this.inmates = this.inmates.filter(inmate => {
             if (inmate.sentenceEnd !== Infinity && inmate.roundId) {
