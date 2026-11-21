@@ -187,12 +187,18 @@ export const getChangeAddressesUpToLastUsed = (change: ChangeAddress[]) => {
     return change.filter(address => getAddressIndex(address) <= lastUsedIndex);
 };
 
-// The client registers outputs only to the DISCOVERY_LOOKOUT addresses after the last used one, so
-// that a wallet which discovers the account with the common gap limit of 20 finds every output.
-// Unused addresses below it were skipped or registered in a failed round. The last used address
-// does not move on an unconfirmed coinjoin, which only keeps the window lower. Addresses with an
-// unconfirmed output are left out, a broadcast coinjoin pays them.
-const getCoinjoinAccountAddresses = ({ addresses, utxo }: Pick<Account, 'addresses' | 'utxo'>) => {
+/**
+ * The client registers outputs only to the DISCOVERY_LOOKOUT addresses after the last used one, so
+ * that a wallet which discovers the account with the common gap limit of 20 finds every output.
+ * Unused addresses below it were skipped or registered in a failed round. The last used address
+ * does not move on an unconfirmed coinjoin, which only keeps the window lower. Addresses with an
+ * unconfirmed output are left out, a broadcast coinjoin pays them. A regular send takes its change
+ * from them too, see selectRegisteredUtxosByAccountKey.
+ */
+export const getCoinjoinAccountAddresses = ({
+    addresses,
+    utxo,
+}: Pick<Account, 'addresses' | 'utxo'>) => {
     const change = addresses?.change ?? [];
     const lastUsedIndex = getLastUsedChangeIndex(change);
     const addressesWithUtxo = new Set(utxo?.map(({ address }) => address));
