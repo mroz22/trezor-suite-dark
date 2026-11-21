@@ -43,6 +43,12 @@ export const ROUND_MIN_INPUT_COUNT = {
     regtest: 2,
 } as const;
 
+// Rounds with AllowedOutputAmounts.Min (sat) of this value or more are skipped, following
+// WalletWasabi CoinJoinClient.MinimumOutputAmountSanity ("ignore rounds with too big minimum
+// denominations").
+// https://github.com/WalletWasabi/WalletWasabi/blob/0ff7c2b254/WalletWasabi/WabiSabi/Client/CoinJoin/Client/CoinJoinClient.cs#L16
+export const ROUND_MIN_OUTPUT_AMOUNT_SANITY = 10000;
+
 // custom timeout for websocket opening
 export const WS_CONNECT_TIMEOUT = 15000;
 
