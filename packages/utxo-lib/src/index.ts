@@ -13,6 +13,7 @@ import { TxWeightCalculator } from './txWeightCalculator';
 
 export { Transaction } from './transaction';
 export { Psbt } from './psbt';
+export { verifySchnorr } from './noble-compatibility';
 
 export {
     address,
