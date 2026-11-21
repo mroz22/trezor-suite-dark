@@ -1,3 +1,5 @@
+import { noopLogger } from '@trezor/logger';
+
 import { createServer } from '../../../mocks/server';
 import {
     DEFAULT_ROUND,
@@ -7,6 +9,7 @@ import {
 import { ROUND_SELECTION_MAX_OUTPUTS } from '../../constants';
 import { SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
 import type { AliceGenerator } from '../../types/alice';
+import type { Round } from '../../types/coordinator';
 import type { CoinjoinRoundGenerator } from '../../types/round';
 import { Alice } from '../Alice';
 import { CoinjoinPrison } from '../CoinjoinPrison';
@@ -90,6 +93,97 @@ describe('selectRound', () => {
             options: server?.requestOptions,
         });
         expect(result[0]).toBe(cjRound);
+    });
+
+    describe('rounds with MinInputCountByRound below minInputCount', () => {
+        const blameOf = '1'.repeat(64);
+
+        const createStatusRound = (
+            Id: string,
+            MinInputCountByRound: number,
+            BlameOf = DEFAULT_ROUND.BlameOf,
+        ): Round => ({
+            ...DEFAULT_ROUND,
+            Id,
+            BlameOf,
+            CoinjoinState: {
+                Type: '',
+                Events: [
+                    {
+                        ...ROUND_CREATION_EVENT,
+                        RoundParameters: {
+                            ...ROUND_CREATION_EVENT.RoundParameters,
+                            MinInputCountByRound,
+                        },
+                    },
+                ],
+            },
+        });
+
+        it('skips regular and blame rounds', () => {
+            const result = getRoundCandidates({
+                roundGenerator,
+                prison,
+                statusRounds: [
+                    createStatusRound('01', 20),
+                    createStatusRound('02', 21),
+                    createStatusRound('03', 20, blameOf),
+                    createStatusRound('04', 21, blameOf),
+                ],
+                coinjoinRounds: [],
+                options: { ...server?.requestOptions, minInputCount: 21 },
+            });
+
+            expect(result.map(({ id }) => id)).toEqual(['02', '04']);
+        });
+
+        it('releases inputs waiting for a skipped blame round', () => {
+            const otherBlameOf = '2'.repeat(64);
+            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf);
+            prison.detainForBlameRound([{ accountKey: 'account-B', outpoint: 'BA' }], otherBlameOf);
+
+            const params = {
+                roundGenerator,
+                prison,
+                coinjoinRounds: [],
+                options: server?.requestOptions,
+            };
+
+            // a skipped regular round does not release them
+            expect(
+                getRoundCandidates({ ...params, statusRounds: [createStatusRound('11', 1)] }),
+            ).toEqual([]);
+            expect(prison.getBlameOfInmates()).toHaveLength(2);
+
+            expect(
+                getRoundCandidates({
+                    ...params,
+                    statusRounds: [createStatusRound('12', 1, blameOf)],
+                }),
+            ).toEqual([]);
+            expect(prison.getBlameOfInmates()).toEqual([
+                expect.objectContaining({ id: 'BA', roundId: otherBlameOf }),
+            ]);
+        });
+
+        it('logs a skipped round once', () => {
+            const logger = { ...noopLogger, info: jest.fn() };
+            const params = {
+                roundGenerator,
+                prison,
+                statusRounds: [createStatusRound('21', 1)],
+                coinjoinRounds: [],
+                options: { ...server?.requestOptions, logger },
+            };
+
+            getRoundCandidates(params);
+            getRoundCandidates(params);
+
+            expect(logger.info).toHaveBeenCalledTimes(1);
+            expect(logger.info).toHaveBeenCalledWith(
+                'Skipping round ~~21~~. Min input count 1 is below 2',
+            );
+        });
     });
 
     it('no available Accounts', () => {

@@ -3,7 +3,12 @@ import * as trezorUtils from '@trezor/utils';
 
 import { createServer } from '../../mocks/server';
 import { createInput } from '../__fixtures__/input.fixture';
-import { DEFAULT_ROUND, createCoinjoinRound } from '../__fixtures__/round.fixture';
+import {
+    DEFAULT_ROUND,
+    ROUND_CREATION_EVENT,
+    createCoinjoinRound,
+    createInputAddedEvent,
+} from '../__fixtures__/round.fixture';
 import * as CONSTANTS from '../constants';
 
 // mock random delay function
@@ -65,7 +70,8 @@ describe(`CoinjoinRound`, () => {
     });
 
     it('catch errored Round', async () => {
-        // create CoinjoinRound in phase 2 (OutputRegistration)
+        // create CoinjoinRound in phase 2 (OutputRegistration) with inputs of other participants,
+        // so it passes verifyRoundInputs
         const round = createCoinjoinRound(
             [
                 createInput('account-A', 'A1', {
@@ -85,6 +91,18 @@ describe(`CoinjoinRound`, () => {
                 logger,
                 round: {
                     phase: 2,
+                    coinjoinState: {
+                        Type: '',
+                        Events: [
+                            ROUND_CREATION_EVENT,
+                            createInputAddedEvent(
+                                'B00000000000000000000000000000000000000000000000000000000000000002000000',
+                            ),
+                            createInputAddedEvent(
+                                'C00000000000000000000000000000000000000000000000000000000000000003000000',
+                            ),
+                        ],
+                    },
                 },
             },
         );
@@ -94,7 +112,7 @@ describe(`CoinjoinRound`, () => {
 
         expect(logger.error).toHaveBeenCalledTimes(1);
         expect(logger.error).toHaveBeenCalledWith(
-            expect.stringMatching(/Output registration failed/),
+            expect.stringMatching(/Output registration failed: \(0\) Missing credentials to join/),
         );
     });
 

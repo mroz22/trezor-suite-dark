@@ -19,6 +19,9 @@ export interface CoinjoinClientSettings extends BaseSettings {
     coordinatorName: string; // identifier used in commitment data and ownership proof
     middlewareUrl: string;
     prison?: CoinjoinPrisonInmate[];
+    // Rounds and coinjoin transactions with fewer inputs are refused. Defaults to
+    // ROUND_MIN_INPUT_COUNT of the network.
+    minInputCount?: number;
 }
 
 export type {

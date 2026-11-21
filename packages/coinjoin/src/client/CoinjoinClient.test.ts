@@ -244,4 +244,39 @@ describe(`CoinjoinClient`, () => {
 
         createSpy.mockRestore();
     });
+
+    it.each([
+        ['btc', undefined, 21],
+        ['test', undefined, 2],
+        ['regtest', undefined, 2],
+        ['btc', 5, 5],
+    ] as const)(
+        'passes minInputCount of %s network (setting %s) to rounds',
+        async (network, minInputCount, expected) => {
+            const createSpy = jest.spyOn(CoinjoinRound, 'create').mockResolvedValue(undefined);
+            const cli = new CoinjoinClient({ ...server?.requestOptions, network, minInputCount });
+            cli.registerAccount({
+                accountKey: 'account-A',
+                scriptType: 'Taproot',
+                utxos: [],
+                changeAddresses: [],
+                targetAnonymity: 10,
+                rawLiquidityClue: 0,
+                maxFeePerKvbyte: 1,
+                maxCoordinatorFeeRate: 1,
+                maxRounds: 10,
+            });
+            // registerAccount triggers round processing without awaiting it
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            expect(createSpy).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.objectContaining({ minInputCount: expected }),
+                }),
+            );
+
+            cli.disable();
+            createSpy.mockRestore();
+        },
+    );
 });

@@ -135,5 +135,11 @@ export const transactionSignature = (
 
 export { WabiSabiProtocolException } from './coordinatorRequest';
 
+/**
+ * Data from the coordinator contradict each other or the round parameters it announced,
+ * so the coordinator provably lies to this client.
+ */
+export class CoordinatorMisbehaviorError extends Error {}
+
 // reexport all coordinator types
 export type * from '../types/coordinator';

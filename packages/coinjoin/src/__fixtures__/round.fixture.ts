@@ -1,7 +1,7 @@
 import { CoinjoinPrison } from '../client/CoinjoinPrison';
 import { CoinjoinRound } from '../client/CoinjoinRound';
 import { ROUND_SELECTION_REGISTRATION_OFFSET } from '../constants';
-import type { AllowedScriptTypes, Round } from '../types/coordinator';
+import type { AllowedScriptTypes, CoinjoinInputAddedEvent, Round } from '../types/coordinator';
 
 export const ROUND_CREATION_EVENT = {
     Type: 'RoundCreated' as const,
@@ -51,6 +51,19 @@ export const INPUT_ADDED_EVENT = {
     },
     OwnershipProof: '',
 };
+
+// P2TR input registered in the round with the given outpoint
+export const createInputAddedEvent = (Outpoint: string): CoinjoinInputAddedEvent => ({
+    Type: 'InputAdded',
+    Coin: {
+        Outpoint,
+        TxOut: {
+            ScriptPubKey: '1 6a6daebd9abae25cdd376b811190163eb00c58e87da1867ba8546229098231c3',
+            Value: 12300000,
+        },
+    },
+    OwnershipProof: 'not-relevant',
+});
 
 export const FEE_RATE_MEDIANS = [
     {

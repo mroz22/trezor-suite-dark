@@ -198,6 +198,7 @@ export interface MockedServer extends Exclude<http.Server, 'addListener'> {
         wabisabiBackendUrl: string;
         coordinatorUrl: string;
         middlewareUrl: string;
+        minInputCount: number;
         signal: AbortSignal;
         logger: Logger;
         setSessionPhase: (event: CoinjoinClientEvents['session-phase']) => void;
@@ -241,6 +242,7 @@ export const createServer = async () => {
         wabisabiBackendUrl: url,
         coordinatorUrl: url,
         middlewareUrl: url,
+        minInputCount: 2,
         signal: new AbortController().signal,
         logger: noopLogger,
         setSessionPhase: () => null,

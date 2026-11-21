@@ -4,7 +4,8 @@ import { networks } from '@trezor/utxo-lib';
 import { transactionSigning } from './transactionSigning';
 import { createServer } from '../../../mocks/server';
 import { createInput } from '../../__fixtures__/input.fixture';
-import { createCoinjoinRound } from '../../__fixtures__/round.fixture';
+import { createCoinjoinRound, createInputAddedEvent } from '../../__fixtures__/round.fixture';
+import { SessionPhase } from '../../enums';
 import * as coordinator from '../coordinator';
 
 jest.mock('../coordinator', () => ({
@@ -59,10 +60,6 @@ describe('transactionSigning', () => {
                         'account-A',
                         '1b5b1feea4dfed4253db5f639011a744a337b25a67975310439233bd8a1dc49f00000000',
                     ),
-                    createInput(
-                        'account-A',
-                        '1b5b1feea4dfed4253db5f639011a744a337b25a67975310439233bd8a1dc49f00000000',
-                    ),
                 ],
                 {
                     ...server?.requestOptions,
@@ -102,19 +99,6 @@ describe('transactionSigning', () => {
                                         TxOut: {
                                             ScriptPubKey:
                                                 '1 b899b1962f24757bf8f641d125a88944d1541272cc86da7815ff7899e368b2d4',
-                                            Value: 12300000,
-                                        },
-                                    },
-                                    OwnershipProof: 'not-relevant',
-                                },
-                                {
-                                    Type: 'InputAdded',
-                                    Coin: {
-                                        Outpoint:
-                                            '1B5B1FEEA4DFED4253DB5F639011A744A337B25A67975310439233BD8A1DC49F00000000',
-                                        TxOut: {
-                                            ScriptPubKey:
-                                                '1 6a6daebd9abae25cdd376b811190163eb00c58e87da1867ba8546229098231c3',
                                             Value: 12300000,
                                         },
                                     },
@@ -198,6 +182,19 @@ describe('transactionSigning', () => {
                                         TxOut: {
                                             ScriptPubKey:
                                                 '1 6a6daebd9abae25cdd376b811190163eb00c58e87da1867ba8546229098231c3',
+                                            Value: 12300000,
+                                        },
+                                    },
+                                    OwnershipProof: 'not-relevant',
+                                },
+                                {
+                                    Type: 'InputAdded', // external input
+                                    Coin: {
+                                        Outpoint:
+                                            '000000000000000000000000000000000000000000000000000000000000000001000000',
+                                        TxOut: {
+                                            ScriptPubKey:
+                                                '1 b899b1962f24757bf8f641d125a88944d1541272cc86da7815ff7899e368b2d4',
                                             Value: 12300000,
                                         },
                                     },
@@ -398,6 +395,130 @@ describe('transactionSigning', () => {
 
         response.inputs.forEach(input => {
             expect(input.error?.message).toMatch(/Unexpected sum of registered inputs/);
+        });
+    });
+
+    describe('getTransactionData: registered inputs', () => {
+        const OWN_OUTPOINT =
+            '1b5b1feea4dfed4253db5f639011a744a337b25a67975310439233bd8a1dc49f00000000';
+        const OTHER_OUTPOINT =
+            '000000000000000000000000000000000000000000000000000000000000000001000000';
+
+        const createSigningRound = (
+            ownInputs: ReturnType<typeof createInput>[],
+            registeredOutpoints: string[],
+            setSessionPhase = jest.fn(),
+        ) =>
+            createCoinjoinRound(ownInputs, {
+                ...server?.requestOptions,
+                setSessionPhase,
+                round: {
+                    phase: 3,
+                    addresses: [
+                        {
+                            accountKey: 'account-A',
+                            path: "m/10025'/0'/0'/0'/1/0",
+                            address:
+                                'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
+                            scriptPubKey:
+                                '1 b67b77a4cac9a32c463e5bbe0c6cbfbab3c86cb59518e5661766056e6a7e849c',
+                        },
+                    ],
+                    coinjoinState: {
+                        Type: '',
+                        Events: [
+                            ...registeredOutpoints.map(createInputAddedEvent),
+                            {
+                                Type: 'OutputAdded',
+                                Output: {
+                                    ScriptPubKey:
+                                        '1 b67b77a4cac9a32c463e5bbe0c6cbfbab3c86cb59518e5661766056e6a7e849c',
+                                    Value: 12300000 - 5000000 - 11000,
+                                },
+                            },
+                        ],
+                    },
+                },
+            });
+
+        const ACCOUNTS = [
+            {
+                accountKey: 'account-A',
+                changeAddresses: [
+                    {
+                        address: 'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
+                    },
+                ],
+                updateRawLiquidityClue: () => {},
+            } as any, // simplified Account
+        ];
+
+        it.each([
+            [
+                'fewer inputs than minInputCount',
+                [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT],
+                3,
+                /Round has 2 registered inputs but minimum required is 3/,
+            ],
+            [
+                'a duplicate input',
+                [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT, OWN_OUTPOINT],
+                2,
+                /1 duplicate or malformed registered inputs/,
+            ],
+        ])(
+            'refuses to sign a transaction with %s',
+            async (_, registeredOutpoints, minInputCount, message) => {
+                const requestedUrls: string[] = [];
+                server?.addListener('test-request', ({ url, resolve }) => {
+                    requestedUrls.push(url);
+                    resolve();
+                });
+
+                const setSessionPhase = jest.fn();
+                const round = createSigningRound(
+                    [createInput('account-A', OWN_OUTPOINT)],
+                    registeredOutpoints,
+                    setSessionPhase,
+                );
+                const response = await transactionSigning(round, ACCOUNTS, {
+                    ...server?.requestOptions,
+                    network: networks.bitcoin,
+                    minInputCount,
+                });
+
+                expect(response.transactionData).toBeUndefined();
+                expect(requestedUrls).toEqual([]); // no /update-liquidity-clue
+                expect(round.getRequest()).toBeUndefined(); // nothing to sign on the device
+                response.inputs.forEach(input => {
+                    expect(input.error).toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+                    expect(input.error?.message).toMatch(message);
+                });
+                expect(setSessionPhase).toHaveBeenLastCalledWith({
+                    phase: SessionPhase.SignatureFailed,
+                    accountKeys: ['account-A'],
+                });
+            },
+        );
+
+        it('refuses to sign a transaction without inputs of other participants', async () => {
+            const response = await transactionSigning(
+                createSigningRound(
+                    [
+                        createInput('account-A', OWN_OUTPOINT),
+                        createInput('account-B', OTHER_OUTPOINT),
+                    ],
+                    [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT.toUpperCase()],
+                ),
+                ACCOUNTS,
+                { ...server?.requestOptions, network: networks.bitcoin },
+            );
+
+            expect(response.transactionData).toBeUndefined();
+            response.inputs.forEach(input => {
+                expect(input.error).not.toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+                expect(input.error?.message).toMatch(/No inputs of other participants/);
+            });
         });
     });
 
