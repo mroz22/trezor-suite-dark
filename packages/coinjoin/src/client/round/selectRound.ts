@@ -1,9 +1,14 @@
 import type { Logger } from '@trezor/logger';
 import { arrayPartition, arrayToDictionary } from '@trezor/utils';
 
-import { ROUND_SELECTION_MAX_OUTPUTS, ROUND_SELECTION_REGISTRATION_OFFSET } from '../../constants';
+import {
+    ROUND_MIN_OUTPUT_AMOUNT_SANITY,
+    ROUND_SELECTION_MAX_OUTPUTS,
+    ROUND_SELECTION_REGISTRATION_OFFSET,
+} from '../../constants';
 import { RoundPhase, SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
 import type { AliceGenerator, AliceShape } from '../../types/alice';
+import type { CoinjoinRoundParameters } from '../../types/coordinator';
 import type { CoinjoinPrisonShape } from '../../types/prison';
 import type {
     CoinjoinRoundGenerator,
@@ -37,6 +42,48 @@ const releaseRefusedBlameRound = ({ blameOf, prison, logger }: ReleaseRefusedBla
 
     logger.info(`Releasing inputs waiting for a refused blame round of ~~${blameOf}~~`);
     prison.releaseBlameOfInmates(blameOf);
+};
+
+type IsRoundFeeAboveAccountLimitParams = {
+    round: CoinjoinRoundShape;
+    account: Pick<Account, 'accountKey' | 'maxFeePerKvbyte' | 'maxCoordinatorFeeRate'>;
+    logger: Logger;
+};
+
+// Fee limits of the account apply to regular and blame rounds alike, the skip is logged.
+const isRoundFeeAboveAccountLimit = ({
+    round,
+    account,
+    logger,
+}: IsRoundFeeAboveAccountLimitParams): boolean => {
+    const { MiningFeeRate, CoordinationFeeRate } = round.roundParameters;
+    const isFeeAboveLimit =
+        MiningFeeRate > account.maxFeePerKvbyte ||
+        CoordinationFeeRate.Rate > account.maxCoordinatorFeeRate;
+
+    if (isFeeAboveLimit) {
+        logger.info(
+            `Skipping round ~~${round.id}~~ for ~~${account.accountKey}~~. Fees to high ${MiningFeeRate} ${CoordinationFeeRate.Rate}`,
+        );
+    }
+
+    return isFeeAboveLimit;
+};
+
+// Round parameters unsuitable for every account, in regular and blame rounds alike.
+const getRoundSkipReason = (
+    { MinInputCountByRound, AllowedOutputAmounts }: CoinjoinRoundParameters,
+    minInputCount: number,
+): string | undefined => {
+    // MinInputCountByRound is not part of the round id, so it only preselects rounds.
+    // verifyRoundInputs checks the actual inputs.
+    if (MinInputCountByRound < minInputCount) {
+        return `Min input count ${MinInputCountByRound} is below ${minInputCount}`;
+    }
+
+    if (AllowedOutputAmounts.Min >= ROUND_MIN_OUTPUT_AMOUNT_SANITY) {
+        return `Min output amount ${AllowedOutputAmounts.Min} is not below ${ROUND_MIN_OUTPUT_AMOUNT_SANITY}`;
+    }
 };
 
 // Ids of skipped rounds which were already logged. Rounds are listed by the status for minutes
@@ -75,19 +122,15 @@ export const getRoundCandidates = ({
             }
         })
         .filter(round => {
-            // MinInputCountByRound is not part of the round id, so it only preselects rounds.
-            // verifyRoundInputs checks the actual inputs.
-            const { MinInputCountByRound } = round.roundParameters;
-            if (MinInputCountByRound >= minInputCount) return true;
+            const skipReason = getRoundSkipReason(round.roundParameters, minInputCount);
+            if (!skipReason) return true;
 
             if (!loggedSkippedRounds.has(round.id)) {
                 if (loggedSkippedRounds.size >= LOGGED_SKIPPED_ROUNDS_LIMIT) {
                     loggedSkippedRounds.clear();
                 }
                 loggedSkippedRounds.add(round.id);
-                logger.info(
-                    `Skipping round ~~${round.id}~~. Min input count ${MinInputCountByRound} is below ${minInputCount}`,
-                );
+                logger.info(`Skipping round ~~${round.id}~~. ${skipReason}`);
             }
             releaseRefusedBlameRound({ blameOf: round.blameOf, prison, logger });
 
@@ -302,9 +345,16 @@ const selectInputsForBlameRound = ({
 }: SelectInputsForRoundProps) =>
     roundCandidates.find(round => {
         const inputs: AliceShape[] = [];
+        let isRefusedByAccount = false;
         accountCandidates.forEach(account => {
             const utxos = account.blameOf ? account.blameOf[round.blameOf] : null;
             if (utxos && utxos.length > 0) {
+                if (isRoundFeeAboveAccountLimit({ round, account, logger })) {
+                    isRefusedByAccount = true;
+
+                    return;
+                }
+
                 logger.info(
                     `Found blame round for account ~~${account.accountKey}~~ with ${utxos.length} inputs`,
                 );
@@ -321,6 +371,12 @@ const selectInputsForBlameRound = ({
             logger.info(`Created blame round ~~${round.id}~~ with ${round.inputs.length} inputs`);
 
             return true;
+        }
+
+        // Refused by every account with inputs for it. Once some account joins the round,
+        // CoinjoinClient releases the inputs of the refusing ones together with the others.
+        if (isRefusedByAccount) {
+            releaseRefusedBlameRound({ blameOf: round.blameOf, prison: round.prison, logger });
         }
 
         return false;
@@ -384,17 +440,7 @@ export const selectInputsForRound = async ({
                         AnonymitySet: utxo.anonymityLevel as number,
                     }));
 
-                    // skip Round candidate if fees are greater than allowed by account
-                    if (
-                        roundParameters.MiningFeeRate > account.maxFeePerKvbyte ||
-                        roundParameters.CoordinationFeeRate.Rate > account.maxCoordinatorFeeRate
-                    ) {
-                        logger.info(
-                            `Skipping round ~~${round.id}~~ for ~~${account.accountKey}~~. Fees to high ${roundParameters.MiningFeeRate} ${roundParameters.CoordinationFeeRate.Rate}`,
-                        );
-
-                        return [];
-                    }
+                    if (isRoundFeeAboveAccountLimit({ round, account, logger })) return [];
 
                     // ...finally call get liquidityClue and
                     // try to select the best utxos combination for given Round
