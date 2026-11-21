@@ -161,7 +161,8 @@ export const outputRegistration = async (
     // - decide if there is only 1 account registered should i abaddon this round and blame it on some "youngest" input?
     // - maybe if there is only 1 account inputs are so "far away" from each other that it is wort to mix anyway?
     try {
-        verifyRoundInputs(round, options);
+        // Signed later only with exactly these inputs, see getTransactionData.
+        round.verifiedInputs = verifyRoundInputs(round, options);
 
         round.setSessionPhase(SessionPhase.RegisteringOutputs);
         // decompose output amounts for all registered inputs grouped by Account

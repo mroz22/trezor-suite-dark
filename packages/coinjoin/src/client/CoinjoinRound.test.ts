@@ -22,6 +22,11 @@ jest.mock('@trezor/utils', () => {
     };
 });
 
+// The inputs of other participants have no valid ownership proofs, see verifyRoundInputs.test.ts.
+jest.mock('../utils/ownershipProof', () => ({
+    verifyOwnershipProof: () => 'valid',
+}));
+
 // mock ROUND_PHASE_PROCESS_TIMEOUT, use getter to mock individually for each test
 jest.mock('../constants', () => {
     const originalModule = jest.requireActual('../constants');
