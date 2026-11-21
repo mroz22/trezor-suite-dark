@@ -27,6 +27,9 @@ jest.mock('@trezor/utils', () => {
 describe('transactionSigning', () => {
     let server: Awaited<ReturnType<typeof createServer>>;
 
+    // Every own input which reaches signing got its confirmed credentials from the coordinator.
+    const CONFIRMED = { confirmedAmountCredentials: [{ Value: 1 }] };
+
     const COINJOIN_REQUEST = {
         fee_rate: 300000,
         min_registrable_amount: 5000,
@@ -59,6 +62,7 @@ describe('transactionSigning', () => {
                     createInput(
                         'account-A',
                         '1b5b1feea4dfed4253db5f639011a744a337b25a67975310439233bd8a1dc49f00000000',
+                        { amount: 12300000 },
                     ),
                 ],
                 {
@@ -73,6 +77,7 @@ describe('transactionSigning', () => {
                                     'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
                                 scriptPubKey:
                                     '1 b67b77a4cac9a32c463e5bbe0c6cbfbab3c86cb59518e5661766056e6a7e849c',
+                                amount: 12300000 - 5000000 - 2000000 - 11000,
                             },
                         ],
                         coinjoinState: {
@@ -85,7 +90,7 @@ describe('transactionSigning', () => {
                                             '1B5B1FEEA4DFED4253DB5F639011A744A337B25A67975310439233BD8A1DC49F00000000',
                                         TxOut: {
                                             ScriptPubKey:
-                                                '1 6a6daebd9abae25cdd376b811190163eb00c58e87da1867ba8546229098231c3',
+                                                '1 fc485427c6b286466faca747ad0faf6aaf6f7ef72ef7c81a2064df3796dbea2e',
                                             Value: 12300000,
                                         },
                                     },
@@ -155,6 +160,7 @@ describe('transactionSigning', () => {
                     createInput(
                         'account-A',
                         '1b5b1feea4dfed4253db5f639011a744a337b25a67975310439233bd8a1dc49f00000000',
+                        { amount: 12300000 },
                     ),
                 ],
                 {
@@ -169,6 +175,7 @@ describe('transactionSigning', () => {
                                     'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
                                 scriptPubKey:
                                     '1 b67b77a4cac9a32c463e5bbe0c6cbfbab3c86cb59518e5661766056e6a7e849c',
+                                amount: 1000000,
                             },
                         ],
                         coinjoinState: {
@@ -181,7 +188,7 @@ describe('transactionSigning', () => {
                                             '1B5B1FEEA4DFED4253DB5F639011A744A337B25A67975310439233BD8A1DC49F00000000',
                                         TxOut: {
                                             ScriptPubKey:
-                                                '1 6a6daebd9abae25cdd376b811190163eb00c58e87da1867ba8546229098231c3',
+                                                '1 fc485427c6b286466faca747ad0faf6aaf6f7ef72ef7c81a2064df3796dbea2e',
                                             Value: 12300000,
                                         },
                                     },
@@ -310,13 +317,14 @@ describe('transactionSigning', () => {
         });
     });
 
-    it('getTransactionData: inconsistent number of registered outputs', async () => {
+    it('getTransactionData: no registered outputs in the round', async () => {
         const response = await transactionSigning(
             createCoinjoinRound(
                 [
                     createInput(
                         'account-A',
                         '1b5b1feea4dfed4253db5f639011a744a337b25a67975310439233bd8a1dc49f00000000',
+                        CONFIRMED,
                     ),
                 ],
                 {
@@ -331,24 +339,18 @@ describe('transactionSigning', () => {
                                     'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
                                 scriptPubKey:
                                     '1 b67b77a4cac9a32c463e5bbe0c6cbfbab3c86cb59518e5661766056e6a7e849c',
+                                amount: 1000000,
                             },
                         ],
                         coinjoinState: {
                             Type: '',
                             Events: [
-                                {
-                                    Type: 'InputAdded',
-                                    Coin: {
-                                        Outpoint:
-                                            '1B5B1FEEA4DFED4253DB5F639011A744A337B25A67975310439233BD8A1DC49F00000000',
-                                        TxOut: {
-                                            ScriptPubKey:
-                                                '1 6a6daebd9abae25cdd376b811190163eb00c58e87da1867ba8546229098231c3',
-                                            Value: 12300000,
-                                        },
-                                    },
-                                    OwnershipProof: 'not-relevant',
-                                },
+                                createInputAddedEvent(
+                                    '1B5B1FEEA4DFED4253DB5F639011A744A337B25A67975310439233BD8A1DC49F00000000',
+                                ),
+                                createInputAddedEvent(
+                                    '000000000000000000000000000000000000000000000000000000000000000001000000',
+                                ),
                             ],
                         },
                     },
@@ -359,17 +361,19 @@ describe('transactionSigning', () => {
         );
 
         response.inputs.forEach(input => {
-            expect(input.error?.message).toMatch(/Unexpected sum of registered outputs/);
+            expect(input.error).toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+            expect(input.error?.message).toMatch(/1 own outputs missing or with a lower amount/);
         });
     });
 
-    it('getTransactionData: inconsistent number of registered inputs', async () => {
+    it('getTransactionData: no registered inputs in the round', async () => {
         const response = await transactionSigning(
             createCoinjoinRound(
                 [
                     createInput(
                         'account-A',
                         '1b5b1feea4dfed4253db5f639011a744a337b25a67975310439233bd8a1dc49f00000000',
+                        CONFIRMED,
                     ),
                 ],
                 {
@@ -384,6 +388,7 @@ describe('transactionSigning', () => {
                                     'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
                                 scriptPubKey:
                                     '1 b67b77a4cac9a32c463e5bbe0c6cbfbab3c86cb59518e5661766056e6a7e849c',
+                                amount: 1000000,
                             },
                         ],
                     },
@@ -394,48 +399,44 @@ describe('transactionSigning', () => {
         );
 
         response.inputs.forEach(input => {
-            expect(input.error?.message).toMatch(/Unexpected sum of registered inputs/);
+            expect(input.error).toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+            expect(input.error?.message).toMatch(
+                /1 own inputs missing or registered with a different amount or script/,
+            );
         });
     });
 
-    describe('getTransactionData: registered inputs', () => {
+    describe('getTransactionData: registered inputs and outputs', () => {
         const OWN_OUTPOINT =
             '1b5b1feea4dfed4253db5f639011a744a337b25a67975310439233bd8a1dc49f00000000';
         const OTHER_OUTPOINT =
             '000000000000000000000000000000000000000000000000000000000000000001000000';
+        const OWN_OUTPUT = {
+            accountKey: 'account-A',
+            path: "m/10025'/0'/0'/0'/1/0",
+            address: 'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
+            scriptPubKey: '1 b67b77a4cac9a32c463e5bbe0c6cbfbab3c86cb59518e5661766056e6a7e849c',
+            amount: 12300000 - 5000000 - 11000,
+        };
 
+        // The coordinator pays the own output exactly the expected amount unless Output is given.
         const createSigningRound = (
             ownInputs: ReturnType<typeof createInput>[],
             registeredOutpoints: string[],
             setSessionPhase = jest.fn(),
+            Output = { ScriptPubKey: OWN_OUTPUT.scriptPubKey, Value: OWN_OUTPUT.amount },
         ) =>
             createCoinjoinRound(ownInputs, {
                 ...server?.requestOptions,
                 setSessionPhase,
                 round: {
                     phase: 3,
-                    addresses: [
-                        {
-                            accountKey: 'account-A',
-                            path: "m/10025'/0'/0'/0'/1/0",
-                            address:
-                                'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
-                            scriptPubKey:
-                                '1 b67b77a4cac9a32c463e5bbe0c6cbfbab3c86cb59518e5661766056e6a7e849c',
-                        },
-                    ],
+                    addresses: [OWN_OUTPUT],
                     coinjoinState: {
                         Type: '',
                         Events: [
                             ...registeredOutpoints.map(createInputAddedEvent),
-                            {
-                                Type: 'OutputAdded',
-                                Output: {
-                                    ScriptPubKey:
-                                        '1 b67b77a4cac9a32c463e5bbe0c6cbfbab3c86cb59518e5661766056e6a7e849c',
-                                    Value: 12300000 - 5000000 - 11000,
-                                },
-                            },
+                            { Type: 'OutputAdded', Output },
                         ],
                     },
                 },
@@ -477,7 +478,7 @@ describe('transactionSigning', () => {
 
                 const setSessionPhase = jest.fn();
                 const round = createSigningRound(
-                    [createInput('account-A', OWN_OUTPOINT)],
+                    [createInput('account-A', OWN_OUTPOINT, CONFIRMED)],
                     registeredOutpoints,
                     setSessionPhase,
                 );
@@ -501,12 +502,85 @@ describe('transactionSigning', () => {
             },
         );
 
+        it.each([
+            [
+                'an own input of a different amount',
+                { ...CONFIRMED, amount: 2 },
+                { ScriptPubKey: OWN_OUTPUT.scriptPubKey, Value: OWN_OUTPUT.amount },
+                /1 own inputs missing or registered with a different amount or script/,
+            ],
+            [
+                'a missing own output',
+                CONFIRMED,
+                {
+                    ScriptPubKey:
+                        '1 b899b1962f24757bf8f641d125a88944d1541272cc86da7815ff7899e368b2d4',
+                    Value: OWN_OUTPUT.amount,
+                },
+                /1 own outputs missing or with a lower amount/,
+            ],
+            [
+                'an own output of a lower amount',
+                CONFIRMED,
+                { ScriptPubKey: OWN_OUTPUT.scriptPubKey, Value: OWN_OUTPUT.amount - 1 },
+                /1 own outputs missing or with a lower amount/,
+            ],
+        ])('refuses to sign a transaction with %s', async (_, inputOptions, Output, message) => {
+            const round = createSigningRound(
+                [createInput('account-A', OWN_OUTPOINT, inputOptions)],
+                [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT],
+                jest.fn(),
+                Output,
+            );
+            const response = await transactionSigning(round, ACCOUNTS, {
+                ...server?.requestOptions,
+                network: networks.bitcoin,
+            });
+
+            expect(response.transactionData).toBeUndefined();
+            expect(round.getRequest()).toBeUndefined(); // nothing to sign on the device
+            response.inputs.forEach(input => {
+                expect(input.error).toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+                expect(input.error?.message).toMatch(message);
+            });
+        });
+
+        it('prepares a transaction paying the own output exactly the expected amount', async () => {
+            const response = await transactionSigning(
+                createSigningRound(
+                    [createInput('account-A', OWN_OUTPOINT, CONFIRMED)],
+                    [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT],
+                ),
+                ACCOUNTS,
+                { ...server?.requestOptions, network: networks.bitcoin },
+            );
+
+            response.inputs.forEach(input => {
+                expect(input.error).toBeUndefined();
+            });
+            // The own input carries the data of this client: createInput has a regtest address,
+            // the script of the coordinator would give a mainnet one.
+            expect(response.transactionData?.inputs).toContainEqual(
+                expect.objectContaining({
+                    path: 'm/10025',
+                    outpoint: OWN_OUTPOINT,
+                    amount: 1,
+                    address: 'bcrt1pl3y9gf7xk2ryvmav5ar66ra0d2hk7lhh9mmusx3qvn0n09kmaghq6gq9fy',
+                    scriptPubKey:
+                        '5120fc485427c6b286466faca747ad0faf6aaf6f7ef72ef7c81a2064df3796dbea2e',
+                }),
+            );
+            expect(response.transactionData?.outputs).toEqual([
+                expect.objectContaining({ path: OWN_OUTPUT.path, amount: OWN_OUTPUT.amount }),
+            ]);
+        });
+
         it('refuses to sign a transaction without inputs of other participants', async () => {
             const response = await transactionSigning(
                 createSigningRound(
                     [
-                        createInput('account-A', OWN_OUTPOINT),
-                        createInput('account-B', OTHER_OUTPOINT),
+                        createInput('account-A', OWN_OUTPOINT, CONFIRMED),
+                        createInput('account-B', OTHER_OUTPOINT, CONFIRMED),
                     ],
                     [OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT.toUpperCase()],
                 ),
