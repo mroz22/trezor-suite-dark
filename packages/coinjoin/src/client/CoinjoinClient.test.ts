@@ -19,6 +19,7 @@ import {
 import { EndRoundState, RoundPhase, SessionPhase } from '../enums';
 import { type RegisterAccountParams } from '../types/account';
 import type { CoinjoinInputAddedEvent, CoinjoinStateEvent, Round } from '../types/coordinator';
+import type { CoinjoinPrisonInmate } from '../types/prison';
 import type { SerializedCoinjoinRound, SessionPhaseEvent } from '../types/round';
 import { getScriptPubKeyFromAddress } from '../utils/coordinatorUtils';
 
@@ -175,13 +176,12 @@ describe(`CoinjoinClient`, () => {
         await cli.enable();
 
         // set prison event listener
-        const prisonEventPromise = new Promise<void>(resolve => {
+        const prisonEventPromise = new Promise<CoinjoinPrisonInmate[]>(resolve => {
             cli.on('prison', event => {
                 cli.unregisterAccount('account-A');
                 cli.disable();
 
-                expect(event.prison.length).toEqual(4); // 4 elements are detained at the end
-                resolve();
+                resolve(event.prison);
             });
         });
 
@@ -243,10 +243,27 @@ describe(`CoinjoinClient`, () => {
         expect(() => cli.registerAccount({ accountKey: 'account-A' } as any)).toThrow();
 
         expect(spyIsDetained.mock.calls.length).toEqual(4); // isDetained was checked 4 times
-        expect(spyDetain.mock.calls.length).toEqual(2); // but only 2 new inmates were added
+        // 2 new inmates were added, the already detained output is now detained for good
+        expect(spyDetain.mock.calls.length).toEqual(3);
 
         // wait for prison event
-        await prisonEventPromise;
+        const inmates = await prisonEventPromise;
+        expect(inmates.length).toEqual(4); // 4 elements are detained at the end
+        // The coordinator has seen the outputs, see CoinjoinPrison.detainRegisteredOutput.
+        expect(inmates.filter(({ type }) => type === 'output')).toEqual([
+            expect.objectContaining({
+                id: 'tb1ppll2u0aaprp92gfkntamd476emye7weykcgnctlyj7lduprjx7ys9jn7w3',
+                errorCode: 'registeredOutput',
+                roundId: '8080808080808080808080808080808080808080808080808080808080808080',
+                sentenceEnd: Infinity,
+            }),
+            expect.objectContaining({
+                id: 'tb1p55k3nua65qqqsq7j9zn8xp6rn3ntht9gj2ww3zfstczytd07htts3txmh9',
+                errorCode: 'registeredOutput',
+                roundId: '9090909090909090909090909090909090909090909090909090909090909090',
+                sentenceEnd: Infinity,
+            }),
+        ]);
     });
 
     it('registerAccount without coordinatorUrl does not create a round', async () => {
@@ -433,6 +450,17 @@ describe(`CoinjoinClient`, () => {
             ...DEFAULT_ROUND,
             Phase: RoundPhase.TransactionSigning,
         };
+        // Change addresses of the account. The first one it registered in an earlier failed round,
+        // the last one in the failed round.
+        const EARLIER_ROUND_ADDRESS =
+            'tb1ppll2u0aaprp92gfkntamd476emye7weykcgnctlyj7lduprjx7ys9jn7w3';
+        const FAILED_ROUND_ADDRESS =
+            'tb1p4jf9crt5gh57h2spvfht4zwjtnre700uvs4u63l2g2huchrk2dms4lm6kv';
+        const CHANGE_ADDRESSES = [
+            EARLIER_ROUND_ADDRESS,
+            'tb1p55k3nua65qqqsq7j9zn8xp6rn3ntht9gj2ww3zfstczytd07htts3txmh9',
+            FAILED_ROUND_ADDRESS,
+        ];
         const ENDED_FAILED_ROUND: Round = {
             ...FAILED_ROUND,
             Phase: RoundPhase.Ended,
@@ -462,10 +490,12 @@ describe(`CoinjoinClient`, () => {
 
             let statusRounds = [FAILED_ROUND];
             const requestedUrls: string[] = [];
+            const registeredScripts: string[] = [];
             const signatureSent = createDeferred();
             const outputRegistrationDone = createDeferred();
-            server?.addListener('test-request', ({ url, resolve }) => {
+            server?.addListener('test-request', ({ url, data, resolve }) => {
                 requestedUrls.push(url);
+                if (url.endsWith('/output-registration')) registeredScripts.push(data.Script);
                 if (url.endsWith('/status')) {
                     resolve({
                         RoundStates: statusRounds,
@@ -499,8 +529,18 @@ describe(`CoinjoinClient`, () => {
             // How the client joined it does not matter here. The first status update creates it.
             const createSpy = jest
                 .spyOn(CoinjoinRound, 'create')
-                .mockImplementationOnce(({ prison, options }) =>
-                    Promise.resolve(
+                .mockImplementationOnce(({ prison, options }) => {
+                    // as outputRegistration did
+                    prison.detainRegisteredOutput(
+                        { accountKey: 'account-A', address: EARLIER_ROUND_ADDRESS },
+                        '3'.repeat(64),
+                    );
+                    prison.detainRegisteredOutput(
+                        { accountKey: 'account-A', address: FAILED_ROUND_ADDRESS },
+                        FAILED_ROUND.Id,
+                    );
+
+                    return Promise.resolve(
                         createCoinjoinRound(
                             [
                                 createInput('account-A', OWN_UTXO.outpoint, {
@@ -522,8 +562,8 @@ describe(`CoinjoinClient`, () => {
                                 },
                             },
                         ),
-                    ),
-                );
+                    );
+                });
 
             const cli = new CoinjoinClient(server?.requestOptions);
             let blameRound: SerializedCoinjoinRound | undefined;
@@ -572,16 +612,10 @@ describe(`CoinjoinClient`, () => {
                 maxCoordinatorFeeRate: 0.01,
                 maxRounds: 10,
                 utxos: [OWN_UTXO],
-                changeAddresses: [
-                    {
-                        path: "m/10025'/1'/0'/1'/1/0",
-                        address: 'tb1ppll2u0aaprp92gfkntamd476emye7weykcgnctlyj7lduprjx7ys9jn7w3',
-                    },
-                    {
-                        path: "m/10025'/1'/0'/1'/1/1",
-                        address: 'tb1p55k3nua65qqqsq7j9zn8xp6rn3ntht9gj2ww3zfstczytd07htts3txmh9',
-                    },
-                ],
+                changeAddresses: CHANGE_ADDRESSES.map((address, index) => ({
+                    path: `m/10025'/1'/0'/1'/1/${index}`,
+                    address,
+                })),
             });
 
             await signatureSent.promise;
@@ -591,14 +625,19 @@ describe(`CoinjoinClient`, () => {
             cli.disable();
             createSpy.mockRestore();
 
-            return { requestedUrls, blameRound };
+            return { requestedUrls, registeredScripts, blameRound };
         };
 
         it('registers outputs in a blame round with inputs of the failed round', async () => {
-            const { requestedUrls, blameRound } = await runBlameRound([OTHER_OUTPOINT]);
+            const { requestedUrls, registeredScripts, blameRound } = await runBlameRound([
+                OTHER_OUTPOINT,
+            ]);
 
             expect(requestedUrls).toContainEqual(expect.stringMatching(/\/credential-issuance$/));
-            expect(requestedUrls).toContainEqual(expect.stringMatching(/\/output-registration$/));
+            // The output of the failed round, not the free address nor that of the earlier round.
+            expect(registeredScripts).toEqual([
+                getScriptPubKeyFromAddress(FAILED_ROUND_ADDRESS, networks.testnet, 'Taproot'),
+            ]);
             expect(blameRound?.failed).toEqual([]);
         });
 

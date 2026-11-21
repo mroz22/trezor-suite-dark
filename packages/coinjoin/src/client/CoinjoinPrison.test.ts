@@ -56,6 +56,23 @@ describe('CoinjoinPrison', () => {
             expect(prison.inmates).toEqual([]);
         });
 
+        it('are released without the outputs registered in the round', () => {
+            const prison = new CoinjoinPrison();
+            prison.detainForBlameRound([ownInput], '01', signedOutpoints);
+            prison.detainRegisteredOutput({ accountKey: 'account-A', address: 'bc1p01' }, '01');
+
+            prison.releaseBlameOfInmates('01');
+
+            expect(prison.inmates).toEqual([
+                expect.objectContaining({
+                    id: 'bc1p01',
+                    errorCode: 'registeredOutput',
+                    roundId: '01',
+                    sentenceEnd: Infinity,
+                }),
+            ]);
+        });
+
         it('are released when the round is no longer present in Status', () => {
             const prison = new CoinjoinPrison();
             prison.detainForBlameRound([ownInput], '01', signedOutpoints);

@@ -181,14 +181,19 @@ export const getUnregisteredAccounts = ({
 // exclude Account.utxos which are registered in CoinjoinRounds or detained in CoinjoinPrison
 export const getAccountCandidates = ({
     accounts,
+    statusRounds,
     coinjoinRounds,
     prison,
     options: { logger, setSessionPhase },
-}: Pick<SelectRoundProps, 'accounts' | 'coinjoinRounds' | 'prison' | 'options'>) => {
+}: Pick<
+    SelectRoundProps,
+    'accounts' | 'statusRounds' | 'coinjoinRounds' | 'prison' | 'options'
+>) => {
     // collect outpoints of all currently registered inputs in CoinjoinRounds + inputs in prison
     const registeredOutpoints = coinjoinRounds
         .flatMap(round => round.inputs.concat(round.failed).map(u => u.outpoint))
         .concat(prison.inmates.map(i => i.id));
+    const statusRoundIds = statusRounds.map(({ Id }) => Id);
 
     const blameOfInputs = prison.getBlameOfInmates();
     const skippedAccounts: Array<{ key: string; reason: SessionPhase }> = [];
@@ -225,10 +230,21 @@ export const getAccountCandidates = ({
             };
         }
 
-        const availableAddresses = account.changeAddresses.filter(
+        // Blame candidates are not checked above, a blame round reuses the outputs of its failed
+        // round (see outputRegistration) and outputDecomposition limits outputs to the addresses.
+        const freeAddressCount = account.changeAddresses.filter(
             addr => !prison.isDetained(addr.address),
-        );
-        if (availableAddresses.length < ROUND_SELECTION_MAX_OUTPUTS) {
+        ).length;
+        const missingAddressCount = ROUND_SELECTION_MAX_OUTPUTS - freeAddressCount;
+        const recyclableOutputs = {
+            accountKey,
+            addresses: account.changeAddresses.map(({ address }) => address),
+            statusRoundIds,
+        };
+        if (
+            missingAddressCount > 0 &&
+            prison.getRecyclableOutputCount(recyclableOutputs) < missingAddressCount
+        ) {
             logger.info(`Skip candidate ~~${accountKey}~~. Not enough change addresses`);
             skippedAccounts.push({
                 key: account.accountKey,
@@ -310,6 +326,19 @@ export const getAccountCandidates = ({
                 });
 
                 return [];
+            }
+
+            if (missingAddressCount > 0) {
+                // Unlike WalletWasabi, which registers them again in its next round, reuse outputs
+                // of failed rounds only once fresh addresses run out, and only for an account with
+                // inputs for a round.
+                const recycled = prison.recycleOutputs({
+                    ...recyclableOutputs,
+                    count: missingAddressCount,
+                });
+                logger.info(
+                    `Recycling ${recycled.addressCount} change addresses of ${recycled.roundCount} failed rounds of ~~${accountKey}~~`,
+                );
             }
 
             logger.info(`Found account candidate ~~${accountKey}~~ with ${utxos.length} inputs`);
@@ -605,6 +634,7 @@ export const selectRound = async ({
     setSessionPhase({ phase: SessionPhase.CoinSelection, accountKeys: unregisteredAccountKeys });
     const accountCandidates = getAccountCandidates({
         accounts: unregisteredAccounts,
+        statusRounds,
         coinjoinRounds,
         prison,
         options,
