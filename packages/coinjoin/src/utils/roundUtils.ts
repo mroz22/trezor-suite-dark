@@ -12,6 +12,7 @@ import {
 } from '../constants';
 import { RoundPhase } from '../enums';
 import type { CoinjoinRoundShape, CoinjoinTransactionData } from '../types';
+import { isRoundIdMatching } from './roundHasher';
 import {
     type CoinjoinRoundParameters,
     type CoinjoinState,
@@ -168,9 +169,10 @@ export const getSigningSendDeadline = ({
         phaseDeadline,
     );
 
-// get relevant round data from the most recent round
-const getDataFromRounds = (rounds: Round[]) => {
-    const lastRound = rounds.at(-1);
+// Relevant round data from the most recent round whose id matches its parameters. The values of
+// other rounds may differ for each client.
+const getDataFromRounds = (rounds: Round[], coordinatorName: string) => {
+    const lastRound = rounds.findLast(round => isRoundIdMatching(round, coordinatorName));
     const roundParameters = lastRound && getRoundParameters(lastRound);
 
     return {
@@ -193,14 +195,17 @@ const getDataFromRounds = (rounds: Round[]) => {
  * - coordinatorFeeRate: multiply the amount registered for coinjoin by this value to get the total fee
  * - feeRateMedian: recommended base fee rate in sat/vB
  */
-export const transformStatus = ({
-    CoinJoinFeeRateMedians,
-    RoundStates: rounds,
-}: CoinjoinStatus) => {
-    const { allowedInputAmounts, coordinationFeeRate, miningFeeRate } = getDataFromRounds(rounds);
+export const transformStatus = (
+    { CoinJoinFeeRateMedians, RoundStates: rounds }: CoinjoinStatus,
+    coordinatorName: string,
+) => {
+    const { allowedInputAmounts, coordinationFeeRate, miningFeeRate } = getDataFromRounds(
+        rounds,
+        coordinatorName,
+    );
     // coinJoinFeeRateMedians include an array of medians per day, week and month - we take the first (day) median as the recommended fee rate base.
     // WalletWasabi coordinators send it empty since 2.4.0; the mining fee rate of the last round in
-    // the status is the closest substitute.
+    // the status with a matching id is the closest substitute.
     // The value is converted from kvBytes (kilo virtual bytes) to vBytes (how the value is displayed in UI).
     const feeRatePerKvbyte = CoinJoinFeeRateMedians[0]?.MedianFeeRate ?? miningFeeRate;
     const feeRateMedian = Math.round(feeRatePerKvbyte / 1000);
