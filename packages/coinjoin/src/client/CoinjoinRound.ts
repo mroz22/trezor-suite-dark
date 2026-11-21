@@ -97,7 +97,7 @@ export class CoinjoinRound extends TypedEmitter<Events> {
     phaseStartLowerBound?: number; // safe lower bound (ms) for when the current phase started (see getSigningSendDeadline)
     roundDeadline: number; // deadline is inaccurate,round may end earlier
     commitmentData: string; // commitment data used for ownership proof and witness requests
-    addresses: (AccountAddress & { accountKey: string })[] = []; // list of addresses (outputs) used in this round in outputRegistration phase
+    addresses: (AccountAddress & { accountKey: string; amount: number })[] = []; // list of addresses (outputs) used in this round in outputRegistration phase
     transactionData?: CoinjoinTransactionData; // transaction to sign
     broadcastedTxDetails?: BroadcastedTransactionDetails; // transaction broadcasted
     liquidityClues?: CoinjoinTransactionLiquidityClue[]; // updated liquidity clues

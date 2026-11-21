@@ -21,6 +21,8 @@ export interface AliceConfirmationInterval {
 export interface AliceShape {
     path: string; // utxo derivation path
     outpoint: string;
+    address: string; // utxo address
+    scriptPubKey: string; // utxo scriptPubKey in hex
     amount: number;
     inputSize: number;
     outputSize: number;

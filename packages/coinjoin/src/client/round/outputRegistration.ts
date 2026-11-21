@@ -8,7 +8,8 @@ import * as middleware from '../middleware';
 import { type Bob, outputDecomposition } from './outputDecomposition';
 import { verifyRoundInputs } from './verifyRoundInputs';
 import type { CoinjoinRoundOptions, CoinjoinRoundShape } from '../../types/round';
-import { scheduleDelay } from '../../utils/roundUtils';
+import { getOutputSize } from '../../utils/coordinatorUtils';
+import { scheduleDelay, sumCredentials } from '../../utils/roundUtils';
 import type { Account } from '../Account';
 
 /**
@@ -23,7 +24,7 @@ import type { Account } from '../Account';
 
 const registerOutput = async (
     round: CoinjoinRoundShape,
-    { accountKey, changeAddresses }: Account,
+    { accountKey, changeAddresses, scriptType }: Account,
     { amountCredentials, vsizeCredentials }: Bob,
     assignedAddresses: AccountAddress[],
     options: CoinjoinRoundOptions,
@@ -117,7 +118,19 @@ const registerOutput = async (
         },
     );
 
-    round.addresses.push({ ...address, accountKey });
+    // The coordinator pays the presented amount credentials minus the mining fee for the output
+    // size (WalletWasabi Bob.CalculateOutputAmount with NBitcoin FeeRate.GetFee). Expect the fee
+    // rounded up or, where it rounds down to 0 sat, the whole rate per kvB but at least 1 sat. That
+    // is the most an honest coordinator charges, however it rounds a fee below 1 sat.
+    const { MiningFeeRate } = roundParameters;
+    const exactOutputFee = (getOutputSize(scriptType) * MiningFeeRate) / 1000;
+    const outputFee =
+        Math.floor(exactOutputFee) > 0 ? Math.ceil(exactOutputFee) : Math.max(1, MiningFeeRate);
+    round.addresses.push({
+        ...address,
+        accountKey,
+        amount: sumCredentials(amountCredentials) - outputFee,
+    });
 };
 
 const readyToSign = (
