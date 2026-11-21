@@ -818,7 +818,10 @@ export const restoreCoinjoinSessionThunk =
             maxRounds: session.maxRounds - session.signedRounds.length,
         });
 
-        if (auth.success) {
+        // The session may end during the authorization, e.g. when the coordinator lies.
+        const hasSession = !!selectCoinjoinAccountByKey(getState(), account.key)?.session;
+
+        if (auth.success && hasSession) {
             // dispatch data to reducer
             dispatch(coinjoinSessionRestore(account.key));
             // register authorized account
@@ -828,7 +831,7 @@ export const restoreCoinjoinSessionThunk =
                     session,
                 }),
             );
-        } else {
+        } else if (!auth.success) {
             dispatch(
                 notificationsActions.addToast({
                     type: 'error',

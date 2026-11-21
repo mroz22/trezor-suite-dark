@@ -10,6 +10,7 @@ export const SessionPhase = {
     RetryingRoundPairing: 153,
     CriticalError: 155,
     BlockedUtxos: 156,
+    CoordinatorMisbehavior: 157,
 
     // RoundPhase.ConnectionConfirmation
     AwaitingConfirmation: 201,

@@ -2,7 +2,12 @@ import { combineReducers, createReducer } from '@reduxjs/toolkit';
 
 import { type SelectedAccountRootState, selectedAccountReducer } from '@suite/account';
 import { type LocksRootState, locksReducer } from '@suite/locks';
-import { type State as ModalReducerState, modalReducer } from '@suite/modal';
+import {
+    MODAL_CONTEXT_NONE,
+    type State as ModalReducerState,
+    modalReducer,
+    openModal,
+} from '@suite/modal';
 import { type TorRootState, TorStatus, torActions, torReducer } from '@suite/tor';
 import { type DeviceReducerState } from '@suite-common/device';
 import {
@@ -10,8 +15,10 @@ import {
     prepareMessageSystemReducer,
 } from '@suite-common/message-system';
 import { type TrezorDevice } from '@suite-common/suite-types';
+import { mockSuiteDevice } from '@suite-common/suite-types/mocks';
 import { createTestCompositionRoot, initPreloadedState, testMocks } from '@suite-common/test-utils';
-import { asNetworkSymbol } from '@suite-common/wallet-config';
+import { notificationsActions } from '@suite-common/toast-notifications';
+import { type NetworkSymbol, asNetworkSymbol } from '@suite-common/wallet-config';
 import {
     type AccountsRootState,
     type WalletSettingsRootState,
@@ -22,6 +29,7 @@ import { mockSetAccountAddMetadata } from '@suite-common/wallet-core/mocks';
 import '@suite-common/test-utils/globalOverrides';
 import { asAccountDescriptor } from '@suite-common/wallet-types';
 import { mockAccountKey, mockWalletAccount } from '@suite-common/wallet-types/mocks';
+import { EndRoundState, RoundPhase, SessionPhase } from '@trezor/coinjoin';
 import { type StaticSessionId } from '@trezor/device-utils';
 import { mockActionType, mockReducer } from '@trezor/redux-utils/mocks';
 import { promiseAllSequence } from '@trezor/utils';
@@ -29,6 +37,7 @@ import { promiseAllSequence } from '@trezor/utils';
 import * as fixtures from './__fixtures__/coinjoinClientActions';
 import {
     clientEmitException,
+    clientSessionPhase,
     initCoinjoinServiceThunk,
     onCoinjoinClientRequest,
     onCoinjoinRoundChangedThunk,
@@ -505,6 +514,115 @@ describe('coinjoinClientActions', () => {
         store.dispatch(stopCoinjoinSessionThunk(accountAKey));
 
         expect(TrezorConnect.cancelCoinjoinAuthorization).toHaveBeenCalledTimes(0);
+    });
+
+    it('stops all sessions of the network after the coordinator lies, then ends the round', async () => {
+        const device2StaticSessionId: StaticSessionId = '1stTestnetAddress@device_2_id:0';
+        const busyDevice = { ...fixtures.DEVICE, features: { busy: true } };
+        const device2 = mockSuiteDevice({
+            id: 'device-2-id',
+            path: '2',
+            state: { staticSessionId: device2StaticSessionId },
+            connected: true,
+            available: true,
+            remember: true,
+        });
+        const createCoinjoinAccount = (
+            descriptor: string,
+            symbol: NetworkSymbol,
+            deviceState: StaticSessionId,
+        ) =>
+            mockWalletAccount({
+                accountType: 'coinjoin',
+                descriptor: asAccountDescriptor(descriptor),
+                symbol,
+                deviceState,
+            });
+        // Account A has an input in the lying round, B is registered without one and C is paused.
+        const accountA = createCoinjoinAccount(
+            'accountA',
+            btcSymbol,
+            '1stTestnetAddress@device_id:0',
+        );
+        const accountB = createCoinjoinAccount('accountB', btcSymbol, device2StaticSessionId);
+        const accountC = createCoinjoinAccount(
+            'accountC',
+            btcSymbol,
+            '1stTestnetAddress@device_id:0',
+        );
+        // Another network, its coordinator did not lie.
+        const accountD = createCoinjoinAccount('accountD', testSymbol, device2StaticSessionId);
+        const session = { signedRounds: [], maxRounds: 10, sessionPhaseQueue: [] };
+        const store = initStore({
+            device: { devices: [busyDevice, device2] },
+            accounts: [accountA, accountB, accountC, accountD],
+            coinjoin: {
+                accounts: [
+                    { key: accountA.key, symbol: 'btc', session: { ...session, roundPhase: 3 } },
+                    { key: accountB.key, symbol: 'btc', session: { ...session, roundPhase: 3 } },
+                    { key: accountC.key, symbol: 'btc', session: { ...session, paused: true } },
+                    { key: accountD.key, symbol: 'test', session },
+                ],
+            },
+        } as any); // partial required state
+        store.dispatch(
+            openModal({ type: 'critical-coinjoin-phase', relatedAccountKey: accountA.key }),
+        );
+        store.clearActions();
+
+        // The client emits the session phase while the round ends, before the round event.
+        store.dispatch(
+            clientSessionPhase({
+                phase: SessionPhase.CoordinatorMisbehavior,
+                accountKeys: [accountA.key, accountB.key],
+            }),
+        );
+        await store.dispatch(
+            onCoinjoinRoundChangedThunk({
+                round: {
+                    phase: RoundPhase.Ended,
+                    endRoundState: EndRoundState.None,
+                    inputs: [],
+                    failed: [{ accountKey: accountA.key }],
+                    roundDeadline: Date.now(),
+                },
+            } as any), // params are incomplete
+        );
+        // Let the thunk dispatched by coinjoinMiddleware finish.
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        expect(
+            store.getState().wallet.coinjoin.accounts.map(({ key, session }) => [key, !!session]),
+        ).toEqual([
+            [accountA.key, false],
+            [accountB.key, false],
+            [accountC.key, false],
+            [accountD.key, true],
+        ]);
+        expect(store.getActions()).toContainEqual(
+            expect.objectContaining({
+                type: notificationsActions.addToast.type,
+                payload: expect.objectContaining({
+                    type: 'coinjoin-coordinator-misbehavior',
+                    autoClose: false,
+                }),
+            }),
+        );
+        // onCoinjoinRoundChangedThunk skips the round, the stop ends it on the device once.
+        expect(store.getState().modal.context).toBe(MODAL_CONTEXT_NONE);
+        expect(TrezorConnect.setBusy).toHaveBeenCalledTimes(1);
+        expect(TrezorConnect.setBusy).toHaveBeenCalledWith(
+            expect.objectContaining({ device: { path: busyDevice.path }, expiry_ms: undefined }),
+        );
+        // Device 2 keeps the authorization for the session of account D.
+        expect(TrezorConnect.cancelCoinjoinAuthorization).toHaveBeenCalledTimes(1);
+        expect(TrezorConnect.cancelCoinjoinAuthorization).toHaveBeenCalledWith({
+            device: busyDevice,
+        });
+        // SetBusy would override the pending cancel.
+        const [setBusyCall] = TrezorConnect.setBusy.mock.invocationCallOrder;
+        const [cancelCall] = TrezorConnect.cancelCoinjoinAuthorization.mock.invocationCallOrder;
+        expect(setBusyCall).toBeLessThan(cancelCall ?? 0);
     });
 
     it('CoinjoinClient events', async () => {

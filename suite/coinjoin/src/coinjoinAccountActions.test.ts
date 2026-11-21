@@ -184,6 +184,26 @@ describe('coinjoinAccountActions', () => {
         });
     });
 
+    it('restoreCoinjoinSession: does not register an account whose session ended meanwhile', async () => {
+        const [f] = fixtures.restoreCoinjoinSession;
+        if (!f) throw new Error('Fixture missing');
+        const store = initStore(f.state as Wallet);
+        const { client } = await CoinjoinService.createInstance({ symbol: asNetworkSymbol('btc') });
+        // The session ends while the device authorizes it, e.g. when the coordinator lies.
+        testMocks.setTrezorConnectFixtures([
+            () => {
+                store.dispatch(coinjoinClientActions.coinjoinAccountUnregister(f.param));
+
+                return { success: true };
+            },
+        ]);
+
+        await store.dispatch(coinjoinAccountActions.restoreCoinjoinSessionThunk(f.param));
+
+        expect(client.registerAccount).not.toHaveBeenCalled();
+        expect(store.getState().wallet.coinjoin.accounts[0]?.session).toBeUndefined();
+    });
+
     describe('authorizes the coordinator fee rate in whole firmware units', () => {
         const f = fixtures.coordinatorFeeRateInFirmwareUnits;
         const { authorizeCoinjoin } = testMocks.getTrezorConnectMock();
