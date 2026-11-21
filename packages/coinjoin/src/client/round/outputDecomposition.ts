@@ -454,10 +454,19 @@ export const outputDecomposition = async (
             const allVsizeCredentials = inputs.flatMap(i => i.confirmedVsizeCredentials!);
             // limit available vsize if it's bigger than available change addresses
             // prevent from creating amounts which cannot be assigned to address
+            // (free ones and those reused in a blame round, see outputRegistration)
             const availableAddresses =
                 accounts
                     .find(account => account.accountKey === accountKey)
-                    ?.changeAddresses.filter(addr => !round.prison.isDetained(addr.address)) || [];
+                    ?.changeAddresses.filter(
+                        ({ address }) =>
+                            !round.prison.isDetained(address) ||
+                            round.prison.isReusableOutput({
+                                address,
+                                accountKey,
+                                roundId: round.blameOf,
+                            }),
+                    ) || [];
             const availableVsize = Math.min(
                 sumCredentials(allVsizeCredentials),
                 availableAddresses.length * outputSize,

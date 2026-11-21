@@ -232,9 +232,10 @@ describe('coinjoinClientActions', () => {
                     ],
                     addresses: {
                         change: [
-                            { address: 'A1', transfers: 1 },
-                            { address: 'A2', transfers: 0 },
-                            { address: 'A2', transfers: 0 },
+                            { address: 'A0', path: "m/10025'/0'/0'/1'/1/0", transfers: 0 },
+                            { address: 'A1', path: "m/10025'/0'/0'/1'/1/1", transfers: 1 },
+                            { address: 'A2', path: "m/10025'/0'/0'/1'/1/2", transfers: 0 },
+                            { address: 'A3', path: "m/10025'/0'/0'/1'/1/3", transfers: 0 },
                         ],
                     },
                 },
@@ -247,8 +248,20 @@ describe('coinjoinClientActions', () => {
                         symbol: 'btc',
                         prison: {
                             '000000': { type: 'input', sentenceEnd: Infinity },
+                            // registered in a failed round, below the last used address
+                            A0: {
+                                type: 'output',
+                                sentenceEnd: Infinity,
+                                errorCode: 'registeredOutput',
+                                roundId: '01',
+                            },
                             A1: { type: 'output', sentenceEnd: Infinity },
-                            A2: { type: 'output', sentenceEnd: Infinity },
+                            A2: {
+                                type: 'output',
+                                sentenceEnd: Infinity,
+                                errorCode: 'registeredOutput',
+                                roundId: '01',
+                            },
                             A3: { type: 'output', sentenceEnd: 10000 },
                         },
                     },
@@ -276,6 +289,8 @@ describe('coinjoinClientActions', () => {
                     id: 'A2',
                     sentenceEnd: Infinity,
                     type: 'output',
+                    errorCode: 'registeredOutput',
+                    roundId: '01',
                 },
                 {
                     accountKey: 'account-A',
