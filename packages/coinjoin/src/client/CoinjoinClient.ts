@@ -98,7 +98,13 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
         // detain them if they are not already detained
         const detained = candidate.findDetainedElements(this.status.rounds);
         detained.forEach(item => {
-            if (!this.prison.isDetained(item)) {
+            if ('roundId' in item) {
+                // The coordinator has seen the output, see CoinjoinPrison.detainRegisteredOutput.
+                const { roundId, ...output } = item;
+                if (this.prison.isDetained(output)?.sentenceEnd !== Infinity) {
+                    this.prison.detainRegisteredOutput(output, roundId);
+                }
+            } else if (!this.prison.isDetained(item)) {
                 this.prison.detain(item);
             }
         });

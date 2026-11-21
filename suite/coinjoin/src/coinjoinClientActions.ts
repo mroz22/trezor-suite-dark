@@ -48,6 +48,7 @@ import {
 import { CoinjoinService } from './coinjoinService';
 import { type CoinjoinAccount, type CoinjoinDebugSettings, EndRoundState } from './coinjoinTypes';
 import {
+    getChangeAddressesUpToLastUsed,
     getEstimatedTimePerRound,
     getSessionDeadline,
     isCoinjoinSupportedSymbol,
@@ -847,9 +848,11 @@ export const initCoinjoinServiceThunk =
                 if (!realAccount) return [];
 
                 const utxos = realAccount.utxo!.map(getUtxoOutpoint);
-                const usedChange = realAccount
-                    .addresses!.change.filter(a => a.transfers > 0)
-                    .map(a => a.address);
+                const changeUpToLastUsed = new Set(
+                    getChangeAddressesUpToLastUsed(realAccount.addresses!.change).map(
+                        a => a.address,
+                    ),
+                );
 
                 return Object.entries(account.prison ?? {}).flatMap(([id, inmate]) => {
                     // clear outdated info with Infinity sentence
@@ -858,8 +861,9 @@ export const initCoinjoinServiceThunk =
                         if (inmate.type === 'input' && !utxos.includes(id)) {
                             return [];
                         }
-                        // change addresses with transfers (used addresses)
-                        if (inmate.type === 'output' && usedChange.includes(id)) {
+                        // change addresses which the client no longer gets (used, skipped or
+                        // registered in failed rounds)
+                        if (inmate.type === 'output' && changeUpToLastUsed.has(id)) {
                             return [];
                         }
                     }

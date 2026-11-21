@@ -1,3 +1,5 @@
+import { networks } from '@trezor/utxo-lib';
+
 import { outputDecomposition } from './outputDecomposition';
 import { outputRegistration } from './outputRegistration';
 import { createServer } from '../../../mocks/server';
@@ -7,6 +9,10 @@ import {
     createCoinjoinRound,
     createInputAddedEvent,
 } from '../../__fixtures__/round.fixture';
+import { WabiSabiProtocolErrorCode } from '../../enums';
+import type { AccountAddress } from '../../types/account';
+import type { CoinjoinPrisonInmate } from '../../types/prison';
+import { getScriptPubKeyFromAddress } from '../../utils/coordinatorUtils';
 import { verifyOwnershipProof } from '../../utils/ownershipProof';
 import { CoordinatorMisbehaviorError } from '../coordinator';
 
@@ -130,10 +136,6 @@ describe('outputRegistration', () => {
                             address:
                                 'tb1p55k3nua65qqqsq7j9zn8xp6rn3ntht9gj2ww3zfstczytd07htts3txmh9',
                         },
-                        {
-                            address:
-                                'tb1p4jf9crt5gh57h2spvfht4zwjtnre700uvs4u63l2g2huchrk2dms4lm6kv',
-                        },
                     ],
                 } as any, // partial Account
             ],
@@ -144,6 +146,161 @@ describe('outputRegistration', () => {
         // @ts-expect-error: indexing with noUncheckedIndexedAccess
         const firstInput2: (typeof inputs)[number] = inputs[0];
         expect(firstInput2.error?.message).toMatch(/No change address available/);
+    });
+
+    describe('change addresses', () => {
+        const createChangeAddress = (address: string, index: number): AccountAddress => ({
+            path: `m/10025'/1'/0'/1'/1/${index}`,
+            address,
+            scriptPubKey: getScriptPubKeyFromAddress(address, networks.testnet, 'Taproot'),
+        });
+        const FIRST = createChangeAddress(
+            'tb1ppll2u0aaprp92gfkntamd476emye7weykcgnctlyj7lduprjx7ys9jn7w3',
+            0,
+        );
+        const SECOND = createChangeAddress(
+            'tb1p55k3nua65qqqsq7j9zn8xp6rn3ntht9gj2ww3zfstczytd07htts3txmh9',
+            1,
+        );
+        const THIRD = createChangeAddress(
+            'tb1p4jf9crt5gh57h2spvfht4zwjtnre700uvs4u63l2g2huchrk2dms4lm6kv',
+            2,
+        );
+        const ACCOUNT = {
+            accountKey: 'account-A',
+            scriptType: 'Taproot',
+            changeAddresses: [FIRST, SECOND, THIRD],
+        } as any; // partial Account
+        const FAILED_ROUND_ID = '1'.repeat(64);
+
+        // A round of the own and another input in output registration, in which the account
+        // registers one output.
+        const createRound = (BlameOf = '0'.repeat(64)) => {
+            (outputDecomposition as jest.Mock).mockImplementationOnce(() =>
+                Promise.resolve([
+                    {
+                        accountKey: 'account-A',
+                        outputs: [
+                            {
+                                accountKey: 'account-A',
+                                amount: 100000,
+                                amountCredentials: [{ Value: 100000 }, { Value: 0 }],
+                                vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
+                            },
+                        ],
+                    },
+                ]),
+            );
+
+            return createCoinjoinRound(
+                [createInput('account-A', OWN_OUTPOINT, { registrationData: { AliceId: 'A' } })],
+                {
+                    ...server?.requestOptions,
+                    statusRound: { BlameOf },
+                    round: {
+                        phase: 2,
+                        coinjoinState: createCoinjoinState([OWN_OUTPOINT, OTHER_OUTPOINT]),
+                        blameOfOutpoints: [OWN_OUTPOINT, OTHER_OUTPOINT],
+                    },
+                },
+            );
+        };
+
+        it('are detained for good before the request, also if it fails', async () => {
+            const round = createRound();
+            const registeredOutput = {
+                errorCode: 'registeredOutput',
+                roundId: round.id,
+                sentenceEnd: Infinity,
+            };
+            let inmateOnRequest: CoinjoinPrisonInmate | undefined;
+            server?.addListener('test-request', ({ url, resolve, reject }) => {
+                if (url.endsWith('/output-registration')) {
+                    inmateOnRequest = round.prison.isDetained(FIRST.address);
+                    reject(500, { ErrorCode: 'WrongPhase' });
+                }
+                resolve();
+            });
+
+            const response = await outputRegistration(round, [ACCOUNT], server?.requestOptions);
+
+            expect(inmateOnRequest).toMatchObject(registeredOutput);
+            expect(response.addresses).toEqual([]);
+            response.inputs.forEach(input => {
+                expect(input.error?.message).toMatch(/WrongPhase/);
+            });
+            // Not released by the end of the round, see CoinjoinPrison.release.
+            round.prison.release([]);
+            expect(round.prison.isDetained(FIRST.address)).toMatchObject(registeredOutput);
+        });
+
+        it.each([
+            ['a blame round of the failed round', FAILED_ROUND_ID, THIRD],
+            ['a blame round of another round', '2'.repeat(64), SECOND],
+            ['a regular round', '0'.repeat(64), SECOND],
+        ])(
+            'of a failed round are registered again only in its blame round (%s)',
+            async (_, BlameOf, expected) => {
+                const scripts: string[] = [];
+                server?.addListener('test-request', ({ url, data, resolve }) => {
+                    if (url.endsWith('/output-registration')) scripts.push(data.Script);
+                    resolve();
+                });
+                const round = createRound(BlameOf);
+                // Registered by the account in another failed round and in the failed round.
+                round.prison.detainRegisteredOutput(
+                    { accountKey: 'account-A', address: FIRST.address },
+                    '3'.repeat(64),
+                );
+                round.prison.detainRegisteredOutput(
+                    { accountKey: 'account-A', address: THIRD.address },
+                    FAILED_ROUND_ID,
+                );
+
+                const response = await outputRegistration(round, [ACCOUNT], server?.requestOptions);
+
+                response.inputs.forEach(input => {
+                    expect(input.error).toBeUndefined();
+                });
+                expect(scripts).toEqual([expected.scriptPubKey]);
+                // A blame round of this round may register it again.
+                expect(round.prison.isDetained(expected.address)).toMatchObject({
+                    errorCode: 'registeredOutput',
+                    roundId: round.id,
+                });
+                expect(round.prison.isDetained(FIRST.address)).toMatchObject({
+                    roundId: '3'.repeat(64),
+                });
+            },
+        );
+
+        it('are tried once more after AlreadyRegisteredScript', async () => {
+            const scripts: string[] = [];
+            server?.addListener('test-request', ({ url, data, resolve, reject }) => {
+                if (url.endsWith('/output-registration')) {
+                    scripts.push(data.Script);
+                    reject(500, { ErrorCode: 'AlreadyRegisteredScript' });
+                }
+                resolve();
+            });
+            const round = createRound();
+
+            const response = await outputRegistration(round, [ACCOUNT], server?.requestOptions);
+
+            response.inputs.forEach(input => {
+                expect(input.error?.message).toMatch(/AlreadyRegisteredScript/);
+            });
+            expect(scripts).toEqual([FIRST.scriptPubKey, SECOND.scriptPubKey]);
+            [FIRST, SECOND].forEach(({ address }) => {
+                const inmate = round.prison.isDetained(address);
+                expect(inmate).toMatchObject({
+                    errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+                    sentenceEnd: Infinity,
+                });
+                expect(inmate?.roundId).toBeUndefined(); // never registered again
+            });
+            expect(round.prison.isDetained(THIRD.address)).toBeUndefined();
+        });
     });
 
     it('refuses a round with fewer inputs than minInputCount before revealing outputs', async () => {

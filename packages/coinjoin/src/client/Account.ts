@@ -89,7 +89,7 @@ export class Account {
                                 o => Output.ScriptPubKey === o.scriptPubKey,
                             ) ?? [],
                     )
-                    .map(output => ({ accountKey, ...output }));
+                    .map(output => ({ accountKey, roundId: round.Id, ...output }));
 
                 return [...inputs, ...outputs];
             }

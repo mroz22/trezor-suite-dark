@@ -1,8 +1,16 @@
-import { outputDecomposition as fixtures } from './__fixtures__/outputDecomposition.fixture';
+import {
+    ACCOUNT,
+    outputDecomposition as fixtures,
+} from './__fixtures__/outputDecomposition.fixture';
 import { outputDecomposition } from './outputDecomposition';
 import { createServer } from '../../../mocks/server';
 import { createInput } from '../../__fixtures__/input.fixture';
-import { INPUT_ADDED_EVENT, createCoinjoinRound } from '../../__fixtures__/round.fixture';
+import {
+    INPUT_ADDED_EVENT,
+    createCoinjoinRound,
+    createInputAddedEvent,
+} from '../../__fixtures__/round.fixture';
+import { CoinjoinPrison } from '../CoinjoinPrison';
 
 let server: Awaited<ReturnType<typeof createServer>>;
 
@@ -32,6 +40,60 @@ describe('outputRegistration', () => {
                 server?.requestOptions,
             ),
         ).rejects.toThrow('Missing confirmed credentials');
+    });
+
+    it('outputDecomposition in a blame round counts the outputs of the failed round', async () => {
+        const availableVsize: number[] = [];
+        server?.addListener('test-request', ({ url, resolve, data }) => {
+            if (url.endsWith('/get-outputs-amounts')) {
+                availableVsize.push(data.AvailableVsize);
+                resolve({ OutputAmounts: [20000] });
+            }
+            resolve();
+        });
+
+        const blameOf = 'B'.repeat(64);
+        const prison = new CoinjoinPrison();
+        // Registered in the failed round, its blame round registers them again.
+        prison.detainRegisteredOutput({ accountKey: 'account-A', address: 'bc1p0' }, blameOf);
+        prison.detainRegisteredOutput({ accountKey: 'account-A', address: 'bc1p1' }, blameOf);
+        // Registered in another failed round.
+        prison.detainRegisteredOutput(
+            { accountKey: 'account-A', address: 'bc1p2' },
+            'C'.repeat(64),
+        );
+
+        const input = createInput(
+            'account-A',
+            'A00000000000000000000000000000000000000000000000000000000000000001000000',
+            {
+                confirmedAmountCredentials: [{ Value: 30000 }, { Value: 0 }],
+                confirmedVsizeCredentials: [{ Value: 197 }, { Value: 0 }],
+            },
+        );
+        const response = await outputDecomposition(
+            createCoinjoinRound([input], {
+                ...server?.requestOptions,
+                prison,
+                round: {
+                    phase: 3,
+                    blameOf,
+                    coinjoinState: { Type: '', Events: [createInputAddedEvent(input.outpoint)] },
+                },
+                roundParameters: { MiningFeeRate: 2000 },
+            }),
+            [
+                {
+                    ...ACCOUNT,
+                    changeAddresses: ['bc1p0', 'bc1p1', 'bc1p2'].map(address => ({ address })),
+                },
+            ],
+            server?.requestOptions,
+        );
+
+        // No address is free, the two of the failed round take an output each.
+        expect(availableVsize).toEqual([2 * 43]);
+        expect(response).toMatchObject([{ outputs: [{ amount: 20086 }] }]);
     });
 
     fixtures.forEach(f => {

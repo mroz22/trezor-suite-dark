@@ -127,7 +127,7 @@ describe('ended', () => {
 
         expect(logger.error).toHaveBeenCalledTimes(1);
         expect(logger.error).toHaveBeenCalledWith(expect.stringMatching(/Missing signed inputs/));
-        expect(round.prison.inmates.length).toEqual(2); // input + output are detained
+        expect(round.prison.inmates.length).toEqual(1); // input is detained
     });
 
     it('NotAllAlicesSign by this instance (other)', () => {
@@ -170,7 +170,7 @@ describe('ended', () => {
         expect(logger.error).toHaveBeenCalledWith(
             expect.stringMatching(/This should never happen/),
         );
-        expect(round.prison.inmates.length).toEqual(2); // input + output are detained
+        expect(round.prison.inmates.length).toEqual(1); // input is detained
         expect(round.prison.getBlameOfOutpoints(round.id)).toBeUndefined(); // no blame round
     });
 
@@ -254,12 +254,79 @@ describe('ended', () => {
         ended(round, options);
 
         expect(logger.error).toHaveBeenCalledTimes(0);
-        expect(round.prison.inmates.length).toEqual(2); // input and address (output) detained
+        expect(round.prison.inmates.length).toEqual(1); // input is detained
         // The blame round may contain only inputs of the signed transaction.
         expect(round.prison.getBlameOfOutpoints(round.id)).toEqual([
             '0'.repeat(72),
             'A00000000000000000000000000000000000000000000000000000000000000001000000',
         ]);
+    });
+
+    it.each([
+        [EndRoundState.NotAllAlicesSign, false],
+        [EndRoundState.NotAllAlicesSign, true],
+        [EndRoundState.AbortedNotEnoughAlicesSigned, false],
+        [EndRoundState.AbortedNotEnoughAlicesSigned, true],
+        [EndRoundState.AbortedWithError, true],
+        [EndRoundState.TransactionBroadcastFailed, false],
+    ])('keeps registered addresses detained on %s (signed: %s)', (endRoundState, signed) => {
+        const address = 'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2';
+        const round = createCoinjoinRound(
+            [createInput('account-A', '0'.repeat(72), { witness: '0'.repeat(97 * 2 + 4) })],
+            {
+                ...options,
+                round: {
+                    phase: RoundPhase.Ended,
+                    signed,
+                    endRoundState,
+                    addresses: [
+                        { address, accountKey: 'account-A', path: '', scriptPubKey: '', amount: 1 },
+                    ],
+                    transactionData: TRANSACTION_DATA,
+                },
+            },
+        );
+        // as outputRegistration does
+        round.prison.detainRegisteredOutput({ accountKey: 'account-A', address }, round.id);
+
+        ended(round, options);
+
+        expect(round.prison.isDetained(address)).toMatchObject({
+            errorCode: 'registeredOutput',
+            roundId: round.id,
+            sentenceEnd: Infinity,
+        });
+    });
+
+    it('TransactionBroadcastFailed signed by this instance', () => {
+        const address = 'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2';
+        const round = createCoinjoinRound(
+            [createInput('account-A', '0'.repeat(72), { witness: '0'.repeat(97 * 2 + 4) })],
+            {
+                ...options,
+                round: {
+                    phase: RoundPhase.Ended,
+                    signed: true,
+                    endRoundState: EndRoundState.TransactionBroadcastFailed,
+                    addresses: [
+                        { address, accountKey: 'account-A', path: '', scriptPubKey: '', amount: 1 },
+                    ],
+                    transactionData: TRANSACTION_DATA,
+                },
+            },
+        );
+        // as outputRegistration does
+        round.prison.detainRegisteredOutput({ accountKey: 'account-A', address }, round.id);
+
+        ended(round, options);
+
+        // The coordinator may still broadcast the transaction, so as after a broadcast the address
+        // is neither reused by a blame round nor recycled.
+        expect(round.prison.isDetained(address)).toMatchObject({
+            errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+            roundId: round.id,
+            sentenceEnd: Infinity,
+        });
     });
 
     it('AbortedNotEnoughAlices', () => {
@@ -328,9 +395,28 @@ describe('ended', () => {
             },
         );
 
+        // as outputRegistration does
+        round.prison.detainRegisteredOutput(
+            {
+                accountKey: 'account-A',
+                address: 'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
+            },
+            round.id,
+        );
+
         ended(round, options);
 
         expect(logger.error).toHaveBeenCalledTimes(0);
         expect(round.prison.inmates.length).toEqual(2); // input and output detained forever
+        // neither reused by a blame round nor recycled
+        expect(
+            round.prison.isDetained(
+                'bc1pkeah0fx2ex3jc337twlqcm9lh2eusm94j5vw2eshvczku6n7sjwqrfyfj2',
+            ),
+        ).toMatchObject({
+            errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+            roundId: round.id,
+            sentenceEnd: Infinity,
+        });
     });
 });
