@@ -9,7 +9,7 @@ import {
 import { ROUND_SELECTION_MAX_OUTPUTS } from '../../constants';
 import { SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
 import type { AliceGenerator } from '../../types/alice';
-import type { Round } from '../../types/coordinator';
+import type { CoinjoinRoundParameters, Round } from '../../types/coordinator';
 import type { CoinjoinRoundGenerator } from '../../types/round';
 import { Alice } from '../Alice';
 import { CoinjoinPrison } from '../CoinjoinPrison';
@@ -95,40 +95,40 @@ describe('selectRound', () => {
         expect(result[0]).toBe(cjRound);
     });
 
+    const createStatusRound = (
+        Id: string,
+        RoundParameters: Partial<CoinjoinRoundParameters>,
+        BlameOf = DEFAULT_ROUND.BlameOf,
+    ): Round => ({
+        ...DEFAULT_ROUND,
+        Id,
+        BlameOf,
+        CoinjoinState: {
+            Type: '',
+            Events: [
+                {
+                    ...ROUND_CREATION_EVENT,
+                    RoundParameters: {
+                        ...ROUND_CREATION_EVENT.RoundParameters,
+                        ...RoundParameters,
+                    },
+                },
+            ],
+        },
+    });
+
     describe('rounds with MinInputCountByRound below minInputCount', () => {
         const blameOf = '1'.repeat(64);
-
-        const createStatusRound = (
-            Id: string,
-            MinInputCountByRound: number,
-            BlameOf = DEFAULT_ROUND.BlameOf,
-        ): Round => ({
-            ...DEFAULT_ROUND,
-            Id,
-            BlameOf,
-            CoinjoinState: {
-                Type: '',
-                Events: [
-                    {
-                        ...ROUND_CREATION_EVENT,
-                        RoundParameters: {
-                            ...ROUND_CREATION_EVENT.RoundParameters,
-                            MinInputCountByRound,
-                        },
-                    },
-                ],
-            },
-        });
 
         it('skips regular and blame rounds', () => {
             const result = getRoundCandidates({
                 roundGenerator,
                 prison,
                 statusRounds: [
-                    createStatusRound('01', 20),
-                    createStatusRound('02', 21),
-                    createStatusRound('03', 20, blameOf),
-                    createStatusRound('04', 21, blameOf),
+                    createStatusRound('01', { MinInputCountByRound: 20 }),
+                    createStatusRound('02', { MinInputCountByRound: 21 }),
+                    createStatusRound('03', { MinInputCountByRound: 20 }, blameOf),
+                    createStatusRound('04', { MinInputCountByRound: 21 }, blameOf),
                 ],
                 coinjoinRounds: [],
                 options: { ...server?.requestOptions, minInputCount: 21 },
@@ -151,14 +151,17 @@ describe('selectRound', () => {
 
             // a skipped regular round does not release them
             expect(
-                getRoundCandidates({ ...params, statusRounds: [createStatusRound('11', 1)] }),
+                getRoundCandidates({
+                    ...params,
+                    statusRounds: [createStatusRound('11', { MinInputCountByRound: 1 })],
+                }),
             ).toEqual([]);
             expect(prison.getBlameOfInmates()).toHaveLength(2);
 
             expect(
                 getRoundCandidates({
                     ...params,
-                    statusRounds: [createStatusRound('12', 1, blameOf)],
+                    statusRounds: [createStatusRound('12', { MinInputCountByRound: 1 }, blameOf)],
                 }),
             ).toEqual([]);
             expect(prison.getBlameOfInmates()).toEqual([
@@ -171,7 +174,7 @@ describe('selectRound', () => {
             const params = {
                 roundGenerator,
                 prison,
-                statusRounds: [createStatusRound('21', 1)],
+                statusRounds: [createStatusRound('21', { MinInputCountByRound: 1 })],
                 coinjoinRounds: [],
                 options: { ...server?.requestOptions, logger },
             };
@@ -183,6 +186,106 @@ describe('selectRound', () => {
             expect(logger.info).toHaveBeenCalledWith(
                 'Skipping round ~~21~~. Min input count 1 is below 2',
             );
+        });
+    });
+
+    describe('rounds with AllowedOutputAmounts.Min of 0.0001 BTC or more', () => {
+        const withMinOutputAmount = (Min: number) => ({
+            AllowedOutputAmounts: {
+                ...ROUND_CREATION_EVENT.RoundParameters.AllowedOutputAmounts,
+                Min,
+            },
+        });
+
+        it('skips regular and blame rounds and releases inputs waiting for them', () => {
+            const blameOf = '3'.repeat(64);
+            const skippedBlameOf = '4'.repeat(64);
+            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf);
+            prison.detainForBlameRound(
+                [{ accountKey: 'account-B', outpoint: 'BA' }],
+                skippedBlameOf,
+            );
+
+            const result = getRoundCandidates({
+                roundGenerator,
+                prison,
+                statusRounds: [
+                    createStatusRound('31', withMinOutputAmount(9999)),
+                    createStatusRound('32', withMinOutputAmount(10000)),
+                    createStatusRound('33', withMinOutputAmount(9999), blameOf),
+                    createStatusRound('34', withMinOutputAmount(10000), skippedBlameOf),
+                ],
+                coinjoinRounds: [],
+                options: server?.requestOptions,
+            });
+
+            expect(result.map(({ id }) => id)).toEqual(['31', '33']);
+            expect(prison.getBlameOfInmates()).toEqual([
+                expect.objectContaining({ id: 'AA', roundId: blameOf }),
+            ]);
+        });
+    });
+
+    describe('blame rounds with fees above the limits of the account', () => {
+        const blameOf = '5'.repeat(64);
+        const { MiningFeeRate, CoordinationFeeRate } = ROUND_CREATION_EVENT.RoundParameters;
+        const account = {
+            ...ACCOUNT,
+            maxFeePerKvbyte: MiningFeeRate,
+            maxCoordinatorFeeRate: CoordinationFeeRate.Rate,
+            utxos: [{ outpoint: 'AA', amount: 5000, anonymityLevel: 1 }],
+        };
+
+        it.each([
+            ['mining fee rate', { MiningFeeRate: MiningFeeRate + 1 }],
+            [
+                'coordination fee rate',
+                { CoordinationFeeRate: { ...CoordinationFeeRate, Rate: 0.0031 } },
+            ],
+        ])('skips the round with a high %s and releases its inputs', async (_, roundParameters) => {
+            prison.detainForBlameRound([{ accountKey: 'account-A', outpoint: 'AA' }], blameOf);
+
+            const result = await selectRound({
+                roundGenerator,
+                aliceGenerator,
+                accounts: [account],
+                statusRounds: [createStatusRound('51', roundParameters, blameOf)],
+                coinjoinRounds: [],
+                prison,
+                options: server?.requestOptions,
+            });
+
+            expect(result).toBeUndefined();
+            expect(prison.getBlameOfInmates()).toEqual([]);
+        });
+
+        it('joins the round with inputs of the accounts within their limits', async () => {
+            prison.detainForBlameRound(
+                [
+                    { accountKey: 'account-A', outpoint: 'AA' },
+                    { accountKey: 'account-B', outpoint: 'BA' },
+                ],
+                blameOf,
+            );
+
+            const result = await selectRound({
+                roundGenerator,
+                aliceGenerator,
+                accounts: [
+                    { ...account, maxFeePerKvbyte: MiningFeeRate - 1 },
+                    {
+                        ...account,
+                        accountKey: 'account-B',
+                        utxos: [{ outpoint: 'BA', amount: 5000, anonymityLevel: 1 }],
+                    },
+                ],
+                statusRounds: [createStatusRound('52', {}, blameOf)],
+                coinjoinRounds: [],
+                prison,
+                options: server?.requestOptions,
+            });
+
+            expect(result).toMatchObject({ id: '52', blameOf, inputs: [{ outpoint: 'BA' }] });
         });
     });
 
