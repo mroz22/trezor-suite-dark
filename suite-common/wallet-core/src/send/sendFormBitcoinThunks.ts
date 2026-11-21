@@ -19,6 +19,8 @@ import {
     restoreOrigOutputsOrder,
 } from '@suite-common/wallet-utils';
 import TrezorConnect, {
+    type AccountAddress,
+    type AccountUtxo,
     type ComposeUtxo,
     DEFAULT_SORTING_STRATEGY,
     type FeeLevel,
@@ -59,6 +61,26 @@ const getSequence = ({ account, formValues }: GetSequenceParams) => {
     }
 
     return undefined; // Must be undefined for final (non-RBF) transaction with no locktime
+};
+
+// The coinjoin client registers outputs only to change addresses after the last used one and
+// without an unconfirmed output, which a coinjoin account does not count as used (see
+// getRegisterAccountParams in @suite/coinjoin). A regular send takes its change the same way: the
+// unused addresses below the last used one were mostly registered in failed coinjoin rounds, so
+// the coordinator saw them, and a broadcast coinjoin may pay one with an unconfirmed output.
+const getCoinjoinChangeAddresses = (
+    changeAddresses: AccountAddress[],
+    change: AccountAddress[],
+    utxo: AccountUtxo[],
+) => {
+    const changeAfterLastUsed = new Set(
+        change.slice(change.findLastIndex(({ transfers }) => transfers > 0) + 1),
+    );
+    const addressesWithUtxo = new Set(utxo.map(({ address }) => address));
+
+    return changeAddresses.filter(
+        address => changeAfterLastUsed.has(address) && !addressesWithUtxo.has(address.address),
+    );
 };
 
 type ComposeBitcoinTransactionFeeLevelsThunkState = WalletSettingsRootState;
@@ -124,7 +146,17 @@ export const composeBitcoinTransactionFeeLevelsThunk = createThunk<
         const rbfChangeAddress =
             formState.rbfParams?.type === 'bitcoin' ? formState.rbfParams.changeAddress : undefined;
 
-        const changeAddress = rbfChangeAddress ?? getUnusedChangeAddress(changeAddresses);
+        const changeAddress =
+            rbfChangeAddress ??
+            getUnusedChangeAddress(
+                account.accountType === 'coinjoin'
+                    ? getCoinjoinChangeAddresses(
+                          changeAddresses,
+                          account.addresses.change,
+                          account.utxo,
+                      )
+                    : changeAddresses,
+            );
 
         const params: Parameters<typeof TrezorConnect.composeTransaction>[0] = {
             path: account.path,

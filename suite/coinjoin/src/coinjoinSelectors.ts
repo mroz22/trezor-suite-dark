@@ -18,13 +18,14 @@ import {
 import { type AccountKey } from '@suite-common/wallet-types';
 import { getInputSize, getOutputSize } from '@trezor/coinjoin';
 import { createWeakMapSelector } from '@trezor/redux-utils';
-import { BigNumber } from '@trezor/utils';
+import { BigNumber, deepEqual } from '@trezor/utils';
 
 import { type CoinjoinState } from './coinjoinTypes';
 import {
     breakdownCoinjoinBalance,
     calculateAnonymityProgress,
     calculateAverageAnonymityGainPerRound,
+    getCoinjoinAccountAddresses,
     getMaxFeePerVbyte,
     getMaxRounds,
     getSkipRounds,
@@ -56,7 +57,9 @@ export type SuiteOnlineRootState = {
     };
 };
 
-const createMemoizedSelector = createWeakMapSelector.withTypes<CoinjoinRootState>();
+const createMemoizedSelector = createWeakMapSelector.withTypes<
+    CoinjoinRootState & AccountsRootState
+>();
 
 export const selectCoinjoinAccounts = (state: CoinjoinRootState) => state.wallet.coinjoin.accounts;
 
@@ -180,25 +183,65 @@ export const selectCurrentCoinjoinBalanceBreakdown = (
 };
 
 export const selectRegisteredUtxosByAccountKey = createMemoizedSelector(
-    [selectCoinjoinAccountByKey],
-    coinjoinAccount => {
+    [selectCoinjoinAccountByKey, selectAccountByKey, selectCoinjoinClients],
+    (coinjoinAccount, account, clients) => {
         if (!coinjoinAccount?.prison) return;
-        const { prison, session, transactionCandidates } = coinjoinAccount;
+        const { prison, session, symbol, transactionCandidates } = coinjoinAccount;
+        const isTxCandidate = (roundId: string) =>
+            !!transactionCandidates?.some(tx => tx.roundId === roundId);
 
-        return Object.keys(prison).reduce<typeof prison>((result, key) => {
+        const registered = Object.keys(prison).reduce<typeof prison>((result, key) => {
             // @ts-expect-error: indexing with noUncheckedIndexedAccess
             const inmate: (typeof prison)[string] = prison[key];
             // select **only** inmates with assigned roundId (signed in current round or promised to future blaming round)
+            // and, also without a session, outputs detained for good: the coordinator saw them
             if (
-                inmate.roundId &&
-                (session || transactionCandidates?.some(tx => tx.roundId === inmate.roundId))
+                (inmate.type === 'output' && inmate.sentenceEnd === Infinity) ||
+                (inmate.roundId && (session || isTxCandidate(inmate.roundId)))
             ) {
                 result[key] = inmate;
             }
 
             return result;
         }, {});
+
+        // A regular send takes the first free change address after the last used one (see
+        // composeBitcoinTransactionFeeLevelsThunk). With none of the addresses the client gets
+        // free, it would take one past them, which a wallet discovering the account with the
+        // common gap limit of 20 does not find. Free an output of the oldest failed round for it
+        // instead, the client recycles that round first as well: the coordinator may link the
+        // transaction to the round, but the funds stay where wallets look. Not an output of a
+        // round in the status, which may still run, nor of a round signed here, whose transaction
+        // may still appear.
+        const changeAddresses = account ? getCoinjoinAccountAddresses(account) : [];
+        if (
+            changeAddresses.length === 0 ||
+            changeAddresses.some(({ address }) => !registered[address])
+        ) {
+            return registered;
+        }
+
+        const statusRoundIds = new Set(clients[symbol]?.rounds.map(({ id }) => id));
+        const [oldestFailedRoundOutput] = changeAddresses
+            .flatMap(({ address }) => {
+                const inmate = registered[address];
+
+                return inmate?.errorCode === 'registeredOutput' &&
+                    inmate.roundId &&
+                    !statusRoundIds.has(inmate.roundId) &&
+                    !isTxCandidate(inmate.roundId)
+                    ? [{ address, sentenceStart: inmate.sentenceStart }]
+                    : [];
+            })
+            .toSorted((a, b) => a.sentenceStart - b.sentenceStart);
+        if (!oldestFailedRoundOutput) return registered;
+
+        return Object.fromEntries(
+            Object.entries(registered).filter(([id]) => id !== oldestFailedRoundOutput.address),
+        );
     },
+    // The clients change with every status, keep the result unless it changes.
+    { memoizeOptions: { resultEqualityCheck: deepEqual } },
 );
 
 export const selectSessionProgressByAccountKey = (
