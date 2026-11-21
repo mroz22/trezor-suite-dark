@@ -46,6 +46,7 @@ export interface CoinjoinRoundShape {
     // List of addresses (outputs) used in this round in outputRegistration phase. Amount is the
     // least value the coinjoin transaction has to pay to the address for its credentials.
     addresses: (AccountAddress & { accountKey: string; amount: number })[];
+    verifiedInputs?: string[]; // sorted outpoints (hash:index) of all inputs verified in outputRegistration phase
     transactionData?: CoinjoinTransactionData; // transaction to sign
     broadcastedTxDetails?: BroadcastedTransactionDetails; // transaction broadcasted
     liquidityClues?: CoinjoinTransactionLiquidityClue[]; // updated liquidity clues
