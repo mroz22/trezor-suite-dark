@@ -47,6 +47,7 @@ export interface CoinjoinRoundShape {
     // least value the coinjoin transaction has to pay to the address for its credentials.
     addresses: (AccountAddress & { accountKey: string; amount: number })[];
     verifiedInputs?: string[]; // sorted outpoints (hash:index) of all inputs verified in outputRegistration phase
+    blameOfOutpoints?: readonly string[]; // inputs of the signed transaction of the round this one is blame of
     transactionData?: CoinjoinTransactionData; // transaction to sign
     broadcastedTxDetails?: BroadcastedTransactionDetails; // transaction broadcasted
     liquidityClues?: CoinjoinTransactionLiquidityClue[]; // updated liquidity clues

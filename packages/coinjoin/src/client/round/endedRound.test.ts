@@ -3,7 +3,7 @@ import { networks } from '@trezor/utxo-lib';
 
 import { ended } from './endedRound';
 import { createInput } from '../../__fixtures__/input.fixture';
-import { createCoinjoinRound } from '../../__fixtures__/round.fixture';
+import { createCoinjoinRound, createTransactionData } from '../../__fixtures__/round.fixture';
 import { EndRoundState, RoundPhase, WabiSabiProtocolErrorCode } from '../../enums';
 
 describe('ended', () => {
@@ -14,6 +14,12 @@ describe('ended', () => {
         logger,
         network: networks.bitcoin,
     };
+
+    // Transaction to sign with the own input and an input of another participant.
+    const TRANSACTION_DATA = createTransactionData([
+        '0'.repeat(72),
+        'A00000000000000000000000000000000000000000000000000000000000000001000000',
+    ]);
 
     beforeAll(async () => {});
 
@@ -153,6 +159,7 @@ describe('ended', () => {
                             scriptPubKey: '',
                         },
                     ],
+                    transactionData: TRANSACTION_DATA,
                 },
             },
         );
@@ -164,6 +171,7 @@ describe('ended', () => {
             expect.stringMatching(/This should never happen/),
         );
         expect(round.prison.inmates.length).toEqual(2); // input + output are detained
+        expect(round.prison.getBlameOfOutpoints(round.id)).toBeUndefined(); // no blame round
     });
 
     it('AbortedNotEnoughAlicesSigned by other instance (no blame round)', () => {
@@ -196,6 +204,7 @@ describe('ended', () => {
                             scriptPubKey: '',
                         },
                     ],
+                    transactionData: TRANSACTION_DATA,
                 },
             },
         );
@@ -204,6 +213,7 @@ describe('ended', () => {
 
         expect(logger.error).toHaveBeenCalledTimes(0);
         expect(round.prison.inmates.length).toEqual(0);
+        expect(round.prison.getBlameOfOutpoints(round.id)).toBeUndefined();
     });
 
     it('NotAllAlicesSign by other instance (wait for blame round)', () => {
@@ -236,6 +246,7 @@ describe('ended', () => {
                             scriptPubKey: '',
                         },
                     ],
+                    transactionData: TRANSACTION_DATA,
                 },
             },
         );
@@ -244,6 +255,11 @@ describe('ended', () => {
 
         expect(logger.error).toHaveBeenCalledTimes(0);
         expect(round.prison.inmates.length).toEqual(2); // input and address (output) detained
+        // The blame round may contain only inputs of the signed transaction.
+        expect(round.prison.getBlameOfOutpoints(round.id)).toEqual([
+            '0'.repeat(72),
+            'A00000000000000000000000000000000000000000000000000000000000000001000000',
+        ]);
     });
 
     it('AbortedNotEnoughAlices', () => {

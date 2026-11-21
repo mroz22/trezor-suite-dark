@@ -237,6 +237,41 @@ describe('outputRegistration', () => {
         });
     });
 
+    it('refuses a blame round with an input which was not in the failed round before revealing outputs', async () => {
+        const requestedUrls: string[] = [];
+        server?.addListener('test-request', ({ url, resolve }) => {
+            requestedUrls.push(url);
+            resolve();
+        });
+
+        const response = await outputRegistration(
+            createCoinjoinRound([createInput('account-A', OWN_OUTPOINT)], {
+                ...server?.requestOptions,
+                statusRound: { BlameOf: '1'.repeat(64) },
+                round: {
+                    phase: 2,
+                    coinjoinState: createCoinjoinState([
+                        OWN_OUTPOINT,
+                        OTHER_OUTPOINT,
+                        OTHER_OUTPOINT_2,
+                    ]),
+                    blameOfOutpoints: [OWN_OUTPOINT, OTHER_OUTPOINT],
+                },
+            }),
+            [],
+            server?.requestOptions,
+        );
+
+        expect(outputDecomposition).not.toHaveBeenCalled();
+        expect(requestedUrls).toEqual([]); // no /credential-issuance or /output-registration
+        expect(response.verifiedInputs).toBeUndefined();
+        response.inputs.forEach(input => {
+            expect(input.error?.message).toMatch(
+                /1 inputs of the blame round were not in the failed round/,
+            );
+        });
+    });
+
     it('does not take a missing own input without confirmed credentials for a lie', async () => {
         const requestedUrls: string[] = [];
         server?.addListener('test-request', ({ url, resolve }) => {
