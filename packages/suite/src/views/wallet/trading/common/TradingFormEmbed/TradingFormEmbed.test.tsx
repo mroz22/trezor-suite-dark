@@ -52,6 +52,9 @@ jest.mock('#src/views/wallet/trading/exchange/TradingExchangeFormWrapper', () =>
     TradingExchangeFormWrapper: jest.fn(),
 }));
 
+// Suite Dark: the fork hides trading; these tests cover upstream's trading UI.
+jest.mock('@suite/regions/src/trading.suite-dark', () => ({ IS_TRADING_HIDDEN: false }));
+
 type TradingSliceSelectors = {
     accountKey: (state: TradingRootState) => Account['key'] | undefined;
     transactionId: (state: TradingRootState) => string | undefined;
