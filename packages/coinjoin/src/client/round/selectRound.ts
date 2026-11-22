@@ -579,7 +579,9 @@ export const selectInputsForRound = async ({
         if (effectiveValue < selectedRound.roundParameters.AllowedOutputAmounts.Min) {
             // skip round if effective value is too low
             // https://github.com/zkSNACKs/WalletWasabi/issues/10759
-            logger.error(`Skipping the round. Utxo effective value ${effectiveValue} is too low`);
+            logger.error(
+                `Skipping the round. Utxo effective value ~~${effectiveValue}~~ is too low`,
+            );
         } else if (
             // skip round if selected utxo value is greater than maxSuggestedAmount
             // https://github.com/zkSNACKs/WalletWasabi/blob/23e4ec0971303b4502372332ecaffe4ff5d08917/WalletWasabi/WabiSabi/Client/CoinJoinClient.cs#L156

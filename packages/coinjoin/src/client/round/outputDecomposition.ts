@@ -2,6 +2,7 @@ import { arrayToDictionary, getWeakRandomId, throwError } from '@trezor/utils';
 
 import type { CoinjoinRoundOptions, CoinjoinRoundShape } from '../../types/round';
 import { getExternalOutputSize } from '../../utils/coordinatorUtils';
+import { formatRedactedValues } from '../../utils/redacted';
 import { compareOutpoint, getRoundEvents, sumCredentials } from '../../utils/roundUtils';
 import type { Account } from '../Account';
 import * as coordinator from '../coordinator';
@@ -50,7 +51,7 @@ const getOutputAmounts = async (params: GetOutputAmountsParams) => {
             ExternalAmounts.push(i.Coin.TxOut.Value - coordinatorFee - miningFee);
         }
     });
-    logger.info(`Internal inputs: ${InternalAmounts.join(',')}`);
+    logger.info(`Internal inputs: ${formatRedactedValues(InternalAmounts)}`);
     logger.info(`External inputs: ${ExternalAmounts.join(',')}`);
 
     const outputAmounts = await middleware.getOutputsAmounts(
@@ -65,7 +66,7 @@ const getOutputAmounts = async (params: GetOutputAmountsParams) => {
         },
         { signal, baseUrl: middlewareUrl },
     );
-    logger.info(`Decompose amounts: ${outputAmounts.join(',')}`);
+    logger.info(`Decompose amounts: ${formatRedactedValues(outputAmounts)}`);
 
     return outputAmounts.map(amount => {
         const miningFee = Math.floor((outputSize * roundParameters.MiningFeeRate) / 1000);
@@ -96,7 +97,7 @@ const credentialIssuance = async (params: CredentialIssuanceParams) => {
 
     logger.info('Joining credentials');
     logger.info(
-        `Amount ${amountCredentials.map(c => c.Value).join(',')} to ${amountToRequest.join(',')}`,
+        `Amount ${formatRedactedValues(amountCredentials.map(c => c.Value))} to ${formatRedactedValues(amountToRequest)}`,
     );
     logger.info(
         `Vsize ${vsizeCredentials.map(c => c.Value).join(',')} to ${vsizeToRequest.join(',')}`,
@@ -210,11 +211,11 @@ const credentialIssuance = async (params: CredentialIssuanceParams) => {
     };
 
     logger.info(
-        `Output amount credentials: ${output.amountCredentials.map(c => c.Value).join(',')}`,
+        `Output amount credentials: ${formatRedactedValues(output.amountCredentials.map(c => c.Value))}`,
     );
     logger.info(`Output vsize credentials: ${output.vsizeCredentials.map(c => c.Value).join(',')}`);
     logger.info(
-        `Change amount credentials: ${change.amountCredentials.map(c => c.Value).join(',')}`,
+        `Change amount credentials: ${formatRedactedValues(change.amountCredentials.map(c => c.Value))}`,
     );
     logger.info(`Change vsize credentials: ${change.vsizeCredentials.map(c => c.Value).join(',')}`);
 
@@ -357,7 +358,7 @@ const createOutputsCredentials = async (params: CreateOutputsCredentials): Promi
             const amountDust = sumCredentials(updatedAmountCredentials);
             const vsizeDust = sumCredentials(updatedVsizeCredentials);
 
-            options.logger.info(`Amount dust: ${amountDust}`);
+            options.logger.info(`Amount dust: ~~${amountDust}~~`);
             options.logger.info(`Vsize dust: ${vsizeDust}`);
             options.logger.info('Decomposition completed');
 
@@ -490,7 +491,7 @@ export const outputDecomposition = async (
             const amounts: number[] = outputAmounts[index];
             if (!amounts) throw new Error(`Missing amounts at index ${index}`);
 
-            logger.info(`Create outputs: ${amounts.join(',')}`);
+            logger.info(`Create outputs: ${formatRedactedValues(amounts)}`);
             // @ts-expect-error: indexing with noUncheckedIndexedAccess
             const inputs: (typeof groupInputsByAccount)[string] = groupInputsByAccount[accountKey];
             const amountCredentials = inputs.flatMap(i => i.confirmedAmountCredentials!);
