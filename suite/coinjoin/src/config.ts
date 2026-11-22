@@ -37,18 +37,37 @@ type CoinjoinNetworkEnvironmentConfig = Omit<
 
 type ServerEnvironment = PartialRecord<CoinjoinServerEnvironment, CoinjoinNetworkEnvironmentConfig>;
 
-// Suite Dark: btc uses the kruw.io coordinator below. The test network has no coordinator because the
-// public ones shut down; testers set one through debug.coinjoinConfigOverride, see docs/features/coinjoin.md.
+// Suite Dark: btc mixes through the kruw.io coordinator below by default, OpenCoordinator can be chosen
+// instead. The test network has no coordinator because the public ones shut down; testers set one
+// through debug.coinjoinConfigOverride, see docs/features/coinjoin.md.
 export const COINJOIN_NETWORKS: PartialRecord<'btc' | 'test' | 'regtest', ServerEnvironment> = {
     btc: {
         /* default, see getCoinjoinConfig */
         public: {
             network: 'btc',
             coordinatorName: 'CoinJoinCoordinatorIdentifier',
-            // Suite Dark: a public zero-fee WalletWasabi coordinator, so mixing works without
-            // a debug override. It runs no backend, so wabisabiBackendUrl stays unset and the
-            // coordinator version falls back to the client's stub values.
-            coordinatorUrl: 'https://coinjoin.kruw.io/wabisabi/',
+            coordinators: [
+                {
+                    // Suite Dark: a public zero-fee WalletWasabi coordinator, so mixing works
+                    // without a debug override. It runs no backend, so wabisabiBackendUrl stays
+                    // unset and the coordinator version falls back to the client's stub values.
+                    coordinatorUrl: 'https://coinjoin.kruw.io/wabisabi/',
+                    coordinatorName: 'CoinJoinCoordinatorIdentifier',
+                    // Suite Dark: kruw charges no coordinator fee, so authorize none. A round with
+                    // a fee is skipped instead of paid.
+                    maxCoordinatorFeeRate: 0,
+                },
+                {
+                    // Suite Dark: OpenCoordinator, another public zero-fee WalletWasabi coordinator
+                    // the user can choose in the coinjoin settings. Its status had the default
+                    // identifier, no fee, at least 21 inputs and Taproot on 2026-11-22. Its backend
+                    // stays unset as for kruw: with it, Suite would ask to agree again to the
+                    // zkSNACKs legal documents, whose version that backend reports.
+                    coordinatorUrl: 'https://api.opencoordinator.org/wabisabi/',
+                    coordinatorName: 'CoinJoinCoordinatorIdentifier',
+                    maxCoordinatorFeeRate: 0,
+                },
+            ],
             blockbookUrls: ['https://btc.trezor.io'],
             onionDomains: {
                 'trezor.io': 'trezoriovpjcahpzkrewelclulmszwbqpzmzgub37gbcjlvluxtruqad.onion',
