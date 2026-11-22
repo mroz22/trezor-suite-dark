@@ -12,16 +12,7 @@ import {
     selectIsCoinjoinCoordinatorOverriddenBySymbol,
 } from '@suite/coinjoin';
 import { Translation } from '@suite/intl';
-import {
-    Banner,
-    Column,
-    Divider,
-    H3,
-    InfoItem,
-    type Option,
-    Paragraph,
-    Select,
-} from '@trezor/components';
+import { Banner, Column, H3, InfoItem, type Option, Paragraph, Select } from '@trezor/components';
 import { useServices } from '@trezor/dependency-injection';
 import { injectDispatch } from '@trezor/redux-utils';
 
@@ -73,7 +64,6 @@ export const CoordinatorSetup = ({ symbol }: CoordinatorSetupProps) => {
 
     return (
         <Column gap={12} alignItems="stretch">
-            <Divider margin={{ top: 24, bottom: 4 }} />
             <H3>
                 <Translation id="TR_COINJOIN_COORDINATOR" />
             </H3>

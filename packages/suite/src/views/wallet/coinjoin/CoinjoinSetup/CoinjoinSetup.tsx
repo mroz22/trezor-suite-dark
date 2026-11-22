@@ -101,13 +101,13 @@ export const CoinjoinSetup = ({ accountKey }: CoinjoinSetupProps) => {
                                 accountKey={accountKey}
                                 skipRounds={coinjoinAccount.setup.skipRounds}
                             />
+                            {isCoinjoinSupportedSymbol(coinjoinAccount.symbol) && (
+                                <CoordinatorSetup symbol={coinjoinAccount.symbol} />
+                            )}
                         </CustomSetup>
                     </motion.div>
                 )}
             </AnimatePresence>
-            {isCoinjoinSupportedSymbol(coinjoinAccount.symbol) && (
-                <CoordinatorSetup symbol={coinjoinAccount.symbol} />
-            )}
         </Card>
     );
 };
