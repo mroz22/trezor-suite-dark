@@ -386,6 +386,61 @@ interface SelectInputsForRoundProps extends Pick<SelectRoundProps, 'aliceGenerat
     accountCandidates: ReturnType<typeof getAccountCandidates>;
 }
 
+type AccountCandidate = SelectInputsForRoundProps['accountCandidates'][number];
+
+type SelectInputsWithMiddlewareParams = Pick<SelectInputsForRoundProps, 'options'> & {
+    account: AccountCandidate;
+    roundParameters: CoinjoinRoundParameters;
+};
+
+// Select the best combination of account utxos for the round with the middleware algorithm.
+// Returns indexes of account utxos.
+const selectInputsWithMiddleware = ({
+    account,
+    roundParameters,
+    options,
+}: SelectInputsWithMiddlewareParams) => {
+    const { logger } = options;
+    const Utxos = account.utxos.map(utxo => ({
+        Outpoint: utxo.outpoint,
+        Amount: utxo.amount,
+        ScriptPubKey: utxo.scriptPubKey,
+        AnonymitySet: utxo.anonymityLevel as number,
+    }));
+
+    // get liquidityClue and try to select the best utxos combination for given Round
+    return middleware
+        .getLiquidityClue(account.rawLiquidityClue, roundParameters.MaxSuggestedAmount, {
+            baseUrl: options.middlewareUrl,
+        })
+        .then(LiquidityClue =>
+            middleware.selectInputsForRound(
+                {
+                    MiningFeeRate: roundParameters.MiningFeeRate,
+                    CoordinationFeeRate: roundParameters.CoordinationFeeRate,
+                    AllowedInputAmounts: roundParameters.AllowedInputAmounts,
+                    AllowedOutputAmounts: roundParameters.AllowedOutputAmounts,
+                    AllowedInputTypes: roundParameters.AllowedInputTypes,
+                    Utxos,
+                    AnonScoreTarget: account.targetAnonymity,
+                    LiquidityClue,
+                    SemiPrivateThreshold: 2,
+                    ConsolidationMode: false,
+                },
+                {
+                    signal: options.signal,
+                    baseUrl: options.middlewareUrl,
+                },
+            ),
+        )
+        .then(indices => indices.filter(i => Utxos[i])) // filter valid existing indices
+        .catch(error => {
+            logger.error(`selectInputsForRound failed ${error.message}`);
+
+            return [] as number[];
+        });
+};
+
 const selectInputsForBlameRound = ({
     aliceGenerator,
     roundCandidates,
@@ -483,59 +538,14 @@ export const selectInputsForRound = async ({
     const utxoSelection = await Promise.all(
         // for each CoinjoinRound...
         normalRounds.map(round => {
-            // ...create set of parameters
             const { roundParameters } = round;
-            const roundConstants = {
-                MiningFeeRate: roundParameters.MiningFeeRate,
-                CoordinationFeeRate: roundParameters.CoordinationFeeRate,
-                AllowedInputAmounts: roundParameters.AllowedInputAmounts,
-                AllowedOutputAmounts: roundParameters.AllowedOutputAmounts,
-                AllowedInputTypes: roundParameters.AllowedInputTypes,
-            };
 
             return Promise.all(
                 // ...and for each Account
                 normalAccounts.map(account => {
-                    // ...also create set of parameters (utxos)
-                    const Utxos = account.utxos.map(utxo => ({
-                        Outpoint: utxo.outpoint,
-                        Amount: utxo.amount,
-                        ScriptPubKey: utxo.scriptPubKey,
-                        AnonymitySet: utxo.anonymityLevel as number,
-                    }));
-
                     if (isRoundFeeAboveAccountLimit({ round, account, logger })) return [];
 
-                    // ...finally call get liquidityClue and
-                    // try to select the best utxos combination for given Round
-                    return middleware
-                        .getLiquidityClue(
-                            account.rawLiquidityClue,
-                            roundParameters.MaxSuggestedAmount,
-                            { baseUrl: options.middlewareUrl },
-                        )
-                        .then(LiquidityClue =>
-                            middleware.selectInputsForRound(
-                                {
-                                    ...roundConstants,
-                                    Utxos,
-                                    AnonScoreTarget: account.targetAnonymity,
-                                    LiquidityClue,
-                                    SemiPrivateThreshold: 2,
-                                    ConsolidationMode: false,
-                                },
-                                {
-                                    signal: options.signal,
-                                    baseUrl: options.middlewareUrl,
-                                },
-                            ),
-                        )
-                        .then(indices => indices.filter(i => Utxos[i])) // filter valid existing indices
-                        .catch(error => {
-                            logger.error(`selectInputsForRound failed ${error.message}`);
-
-                            return [] as number[];
-                        });
+                    return selectInputsWithMiddleware({ account, roundParameters, options });
                 }),
             );
         }),

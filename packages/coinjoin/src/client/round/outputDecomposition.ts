@@ -16,20 +16,10 @@ import * as middleware from '../middleware';
  * - Combine registered Credentials in to outputs grouped by accountKey
  */
 
-interface GetOutputAmountsParams {
-    round: CoinjoinRoundShape;
-    options: CoinjoinRoundOptions;
-    accountKey: string;
-    availableVsize: number;
-    inputSize: number;
-    outputSize: number;
-}
-
-const getOutputAmounts = async (params: GetOutputAmountsParams) => {
-    const { round, accountKey, outputSize, options } = params;
+// Amounts of the inputs registered in the round: amount Credentials of the account's inputs and
+// estimated values of the other inputs.
+const getRoundInputAmounts = (round: CoinjoinRoundShape, accountKey: string) => {
     const { roundParameters } = round;
-    const { signal, middlewareUrl, logger } = options;
-
     const registeredInputs = getRoundEvents('InputAdded', round.coinjoinState.Events);
     const InternalAmounts: number[] = [];
     const ExternalAmounts: number[] = [];
@@ -52,6 +42,27 @@ const getOutputAmounts = async (params: GetOutputAmountsParams) => {
             ExternalAmounts.push(i.Coin.TxOut.Value - coordinatorFee - miningFee);
         }
     });
+
+    return { InternalAmounts, ExternalAmounts };
+};
+
+interface GetOutputAmountsParams {
+    round: CoinjoinRoundShape;
+    options: CoinjoinRoundOptions;
+    accountKey: string;
+    availableVsize: number;
+    inputSize: number;
+    outputSize: number;
+}
+
+type DecomposeAmountsParams = Omit<GetOutputAmountsParams, 'accountKey'> &
+    ReturnType<typeof getRoundInputAmounts>;
+
+const decomposeAmounts = async (params: DecomposeAmountsParams): Promise<OutputRequest[]> => {
+    const { round, outputSize, options, InternalAmounts, ExternalAmounts } = params;
+    const { roundParameters } = round;
+    const { signal, middlewareUrl, logger } = options;
+
     logger.info(`Internal inputs: ${formatRedactedValues(InternalAmounts)}`);
     logger.info(`External inputs: ${ExternalAmounts.join(',')}`);
 
@@ -76,6 +87,9 @@ const getOutputAmounts = async (params: GetOutputAmountsParams) => {
         return { amount: amount + coordinatorFee + miningFee, vsize: outputSize };
     });
 };
+
+const getOutputAmounts = (params: GetOutputAmountsParams) =>
+    decomposeAmounts({ ...params, ...getRoundInputAmounts(params.round, params.accountKey) });
 
 interface CredentialIssuanceParams {
     round: CoinjoinRoundShape;
