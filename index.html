@@ -79,6 +79,11 @@
                         surveys. Earn's staking and yield banners are still there, and you can close
                         them.
                     </li>
+                    <li>
+                        No Buy, Sell or Swap, and none of the identity checks (KYC) that come with
+                        them. Trezor's trading service doesn't accept Suite Dark's return link, so I
+                        hid trading instead of working around it.
+                    </li>
                     <li>Tor starts with the app, and wallets load only once Tor is connected.</li>
                     <li>Balances start hidden. The eye icon in the sidebar shows them.</li>
                     <li>
@@ -96,7 +101,7 @@
                     <li>It starts in the dark theme, in Bitcoin orange.</li>
                 </ul>
                 <p class="prose">
-                    Everything else is plain Trezor Suite, including every network, Earn, Trading,
+                    Everything else is plain Trezor Suite, including every network, Earn,
                     WalletConnect, NFTs and the experimental password manager. One catch. Links that
                     websites open in Trezor Suite, like WalletConnect links or the Model One
                     recovery page, go to Trezor Suite and not here.
@@ -124,16 +129,16 @@
                         or language packs, all from <code>data.trezor.io</code>.
                     </li>
                     <li>
-                        Trading and Earn data from Trezor's servers. The dashboard and token lists
-                        load it even if you never open Trading or Earn. Voting for TRX in Earn sends
-                        the vote's transaction ID to Trezor's Earn server before the vote goes out.
+                        Earn data from Trezor's servers. The dashboard and token lists load it even
+                        if you never open Earn. Voting for TRX in Earn sends the vote's transaction
+                        ID to Trezor's Earn server before the vote goes out.
                     </li>
                     <li>
-                        Your country, looked up at <code>services.trezor.io</code> on Trading and
-                        Earn pages, and NFT and dApp images through Trezor's image proxy.
+                        Your country, looked up at <code>services.trezor.io</code> on Earn pages,
+                        and NFT and dApp images through Trezor's image proxy.
                     </li>
                     <li>
-                        Safety checks of WalletConnect requests, Earn deposits and swaps through
+                        Safety checks of WalletConnect requests and Earn deposits through
                         <code>cdn.trezor.io</code>, and WalletConnect's relay when you connect a
                         dApp.
                     </li>
@@ -145,8 +150,8 @@
                 </ul>
                 <p class="prose">
                     You can switch a network to your own Blockbook or Electrum server in its
-                    advanced settings. Partner checkouts and support links open in your browser,
-                    outside Tor, and the app asks before it opens them.
+                    advanced settings. Support links open in your browser, outside Tor, and the app
+                    asks before it opens them.
                 </p>
             </section>
 
@@ -225,6 +230,7 @@ yarn build:app:electron --publish never --linux --x64</code></pre>
                     <li>Default to the dark theme</li>
                     <li>Keep the local development profile separate</li>
                     <li>Remove user feedback forms</li>
+                    <li>Hide trading</li>
                     <li>Document the fork for contributors and agents</li>
                 </ol>
                 <p class="prose">
