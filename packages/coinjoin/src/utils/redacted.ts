@@ -12,3 +12,8 @@ export const redacted = (message: string) =>
               return `[redacted]`;
           })
         : `${message}`;
+
+// Wrap each value in its own ~~ ~~ pattern. A whole list in one pattern would be longer than
+// 16 characters and only partially redacted.
+export const formatRedactedValues = (values: number[]) =>
+    values.map(value => `~~${value}~~`).join(',');
