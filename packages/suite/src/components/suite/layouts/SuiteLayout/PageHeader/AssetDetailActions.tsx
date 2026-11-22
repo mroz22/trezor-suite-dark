@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 
 import { type CryptoId } from 'invity-api';
 
+import { selectIsRegionRestricted } from '@suite/regions';
 import {
     selectWalletAssetContractAddress,
     selectWalletAssetNetworkSymbol,
@@ -42,14 +43,17 @@ export const AssetDetailActions = () => {
     const services = useSelector(
         state => selectTradingCoinInfoByCryptoId(state, cryptoId)?.services,
     );
+    const isRegionRestricted = useSelector(selectIsRegionRestricted);
 
     useEffect(() => {
+        if (isRegionRestricted) return;
+
         const request = dispatch(tradingThunks.loadInitialDataThunk({ activeSection: 'buy' }));
 
         return () => {
             request.abort();
         };
-    }, [dispatch]);
+    }, [dispatch, isRegionRestricted]);
 
     if (assetKey === undefined || networkSymbol === undefined) return null;
 
