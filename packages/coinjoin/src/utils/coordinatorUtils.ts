@@ -12,6 +12,7 @@ import {
     type CoinjoinInput,
     type CoinjoinOutput,
     type CoinjoinOutputAddedEvent,
+    type CoinjoinRoundParameters,
 } from '../types/coordinator';
 
 // WabiSabi coordinator is using custom format of address scriptPubKey
@@ -101,6 +102,29 @@ export const getExternalOutputSize = (scriptPubKey: string) => {
 
     return getOutputSize(type);
 };
+
+type GetInputFeesParams = {
+    amount: number;
+    inputSize: number;
+    roundParameters: Pick<CoinjoinRoundParameters, 'MiningFeeRate' | 'CoordinationFeeRate'>;
+    isPayingZeroCoordinationFee: boolean;
+};
+
+// Fees taken from the amount of a registered input: the mining fee for its vsize and the
+// coordination fee, which is 0 if the input is remixed or its amount is lower than or equal to the
+// PlebsDontPayThreshold value.
+export const getInputFees = ({
+    amount,
+    inputSize,
+    roundParameters: { MiningFeeRate, CoordinationFeeRate },
+    isPayingZeroCoordinationFee,
+}: GetInputFeesParams) => ({
+    coordinatorFee:
+        amount > CoordinationFeeRate.PlebsDontPayThreshold && !isPayingZeroCoordinationFee
+            ? Math.floor(CoordinationFeeRate.Rate * amount)
+            : 0,
+    miningFee: Math.floor((inputSize * MiningFeeRate) / 1000),
+});
 
 // read index, hash and txid from input `outpoint`
 export const readOutpoint = (outpoint: string) => {

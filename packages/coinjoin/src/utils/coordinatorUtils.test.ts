@@ -2,6 +2,7 @@ import { networks } from '@trezor/utxo-lib';
 
 import {
     getAddressFromScriptPubKey,
+    getInputFees,
     getScriptPubKeyFromAddress,
     mergePubkeys,
     prefixScriptPubKey,
@@ -138,6 +139,34 @@ describe('coordinatorUtils', () => {
                 networks.bitcoin,
             ),
         ).toEqual('3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy');
+    });
+
+    it('getInputFees', () => {
+        const roundParameters = {
+            MiningFeeRate: 1500,
+            CoordinationFeeRate: { Rate: 0.003, PlebsDontPayThreshold: 1000000 },
+        };
+        const params = { inputSize: 58, roundParameters, isPayingZeroCoordinationFee: false };
+
+        // The coordination fee 3001.5 is rounded down.
+        expect(getInputFees({ ...params, amount: 1000500 })).toEqual({
+            coordinatorFee: 3001,
+            miningFee: 87,
+        });
+        // Remixed input.
+        expect(
+            getInputFees({ ...params, amount: 1000500, isPayingZeroCoordinationFee: true }),
+        ).toEqual({ coordinatorFee: 0, miningFee: 87 });
+        // Amount up to the threshold.
+        expect(getInputFees({ ...params, amount: 1000000 })).toEqual({
+            coordinatorFee: 0,
+            miningFee: 87,
+        });
+        // The mining fee 46.5 for 31 vB is rounded down.
+        expect(getInputFees({ ...params, amount: 5000, inputSize: 31 })).toEqual({
+            coordinatorFee: 0,
+            miningFee: 46,
+        });
     });
 
     it('sortOutputs', () => {
