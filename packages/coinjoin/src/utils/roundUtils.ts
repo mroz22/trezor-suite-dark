@@ -230,6 +230,56 @@ export const getRoundParams = (roundParameters: CoinjoinRoundParameters) => ({
     min_registrable_amount: roundParameters.AllowedInputAmounts.Min,
 });
 
+type GetCoinjoinTransactionParams = {
+    transactionData: CoinjoinTransactionData;
+    network: Network;
+    witnesses?: CoinjoinState['Witnesses'];
+};
+
+// Witnesses are optional: the txid does not commit to segwit witnesses, so the transaction built
+// before signing already has its final txid.
+export const getCoinjoinTransaction = ({
+    transactionData,
+    network,
+    witnesses,
+}: GetCoinjoinTransactionParams) => {
+    const { reverseBuffer, BufferReader } = bufferutils;
+    const tx = new Transaction({ network });
+
+    // constants assigned by coordinator
+    tx.version = 1;
+    tx.locktime = 0;
+    const sequence = 4294967295;
+
+    const getWitness = (index: number) => {
+        if (!witnesses) return [];
+
+        // @ts-expect-error: indexing with noUncheckedIndexedAccess
+        const witnessHex: string = witnesses[index];
+
+        return new BufferReader(Buffer.from(witnessHex, 'hex')).readVector();
+    };
+
+    transactionData.inputs.forEach((input, index) => {
+        tx.ins.push({
+            hash: reverseBuffer(Buffer.from(input.hash, 'hex')),
+            index: input.index,
+            script: Buffer.allocUnsafe(0), // script is not used in calculation
+            sequence,
+            witness: getWitness(index),
+        });
+    });
+
+    transactionData.outputs.forEach(output => {
+        tx.outs.push({
+            value: output.amount.toString(),
+            script: Buffer.from(output.scriptPubKey, 'hex'),
+        });
+    });
+
+    return tx;
+};
+
 export const getBroadcastedTxDetails = ({
     coinjoinState: { IsFullySigned, Witnesses },
     transactionData,
@@ -241,32 +291,7 @@ export const getBroadcastedTxDetails = ({
 }) => {
     if (!IsFullySigned || !Witnesses || !transactionData) return;
 
-    const { reverseBuffer, BufferReader } = bufferutils;
-    const tx = new Transaction({ network });
-
-    // constants assigned by coordinator
-    tx.version = 1;
-    tx.locktime = 0;
-    const sequence = 4294967295;
-
-    transactionData.inputs.forEach((input, index) => {
-        // @ts-expect-error: indexing with noUncheckedIndexedAccess
-        const witnessHex: string = Witnesses[index];
-        tx.ins.push({
-            hash: reverseBuffer(Buffer.from(input.hash, 'hex')),
-            index: input.index,
-            script: Buffer.allocUnsafe(0), // script is not used in calculation
-            sequence,
-            witness: new BufferReader(Buffer.from(witnessHex, 'hex')).readVector(),
-        });
-    });
-
-    transactionData.outputs.forEach(output => {
-        tx.outs.push({
-            value: output.amount.toString(),
-            script: Buffer.from(output.scriptPubKey, 'hex'),
-        });
-    });
+    const tx = getCoinjoinTransaction({ transactionData, network, witnesses: Witnesses });
 
     return {
         ...transactionData,
