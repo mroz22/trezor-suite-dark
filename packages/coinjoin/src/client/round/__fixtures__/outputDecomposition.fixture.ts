@@ -28,21 +28,25 @@ export const outputDecomposition = [
                 outputs: [
                     {
                         amount: 10086,
+                        vsize: 43,
                         amountCredentials: [{ Value: 10086 }, { Value: 0 }],
                         vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                     },
                     {
                         amount: 8186,
+                        vsize: 43,
                         amountCredentials: [{ Value: 8186 }, { Value: 0 }],
                         vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                     },
                     {
                         amount: 6642,
+                        vsize: 43,
                         amountCredentials: [{ Value: 6642 }, { Value: 0 }],
                         vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                     },
                     {
                         amount: 5086,
+                        vsize: 43,
                         amountCredentials: [{ Value: 5086 }, { Value: 0 }],
                         vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                     },
@@ -98,6 +102,7 @@ export const outputDecomposition = [
                 outputs: [
                     {
                         amount: 19086,
+                        vsize: 43,
                         amountCredentials: [{ Value: 19086 }, { Value: 0 }],
                         vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                     },
@@ -147,6 +152,7 @@ export const outputDecomposition = [
                 outputs: [
                     {
                         amount: 5086,
+                        vsize: 43,
                         amountCredentials: [{ Value: 5086 }, { Value: 0 }],
                         vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                     },
@@ -157,6 +163,7 @@ export const outputDecomposition = [
                 outputs: [
                     {
                         amount: 5086,
+                        vsize: 43,
                         amountCredentials: [{ Value: 5086 }, { Value: 0 }],
                         vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                     },
@@ -188,6 +195,7 @@ export const outputDecomposition = [
                 outputs: [
                     {
                         amount: 20086,
+                        vsize: 43,
                         amountCredentials: [{ Value: 20086 }, { Value: 0 }],
                         vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                     },

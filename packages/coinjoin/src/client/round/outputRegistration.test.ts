@@ -100,6 +100,7 @@ describe('outputRegistration', () => {
                         {
                             accountKey: 'account-A',
                             amount: 2000,
+                            vsize: 43,
                             amountCredentials: [],
                             vsizeCredentials: [],
                         },
@@ -184,6 +185,7 @@ describe('outputRegistration', () => {
                             {
                                 accountKey: 'account-A',
                                 amount: 100000,
+                                vsize: 43,
                                 amountCredentials: [{ Value: 100000 }, { Value: 0 }],
                                 vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                             },
@@ -481,6 +483,7 @@ describe('outputRegistration', () => {
                             {
                                 accountKey: 'account-A',
                                 amount: 100000,
+                                vsize: 43,
                                 amountCredentials: [{ Value: 100000 }, { Value: 0 }],
                                 vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
                             },
@@ -562,6 +565,7 @@ describe('outputRegistration', () => {
         const createOutput = (accountKey: string, amount: number) => ({
             accountKey,
             amount,
+            vsize: 43,
             amountCredentials: [{ Value: amount }, { Value: 0 }],
             vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
         });

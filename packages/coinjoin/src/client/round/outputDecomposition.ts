@@ -73,7 +73,7 @@ const getOutputAmounts = async (params: GetOutputAmountsParams) => {
         const miningFee = Math.floor((outputSize * roundParameters.MiningFeeRate) / 1000);
         const coordinatorFee = 0; // NOTE: middleware issue https://github.com/zkSNACKs/WalletWasabi/issues/8814 should be `amount > plebsDontPayThreshold ? Math.floor(roundParameters.coordinationFeeRate.rate * amount) : 0` but middleware does not considerate coordinationFeeRate and plebs for external amounts
 
-        return amount + coordinatorFee + miningFee;
+        return { amount: amount + coordinatorFee + miningFee, vsize: outputSize };
     });
 };
 
@@ -277,55 +277,60 @@ const findCredentialsForTarget = (
 
 export interface Bob {
     accountKey: string;
-    amount: number;
+    amount: number; // Amount Credential value: the output value plus the mining fee for its vsize.
+    vsize: number; // Vsize of the output, also its vsize Credential value.
     amountCredentials: middleware.Credentials[];
     vsizeCredentials: middleware.Credentials[];
 }
+
+type OutputRequest = Pick<Bob, 'amount' | 'vsize'>;
 
 interface CreateOutputsCredentials {
     round: CoinjoinRoundShape;
     options: CoinjoinRoundOptions;
     accountKey: string;
-    outputSize: number;
-    amounts: number[];
+    outputs: OutputRequest[];
     amountCredentials: middleware.Credentials[];
     vsizeCredentials: middleware.Credentials[];
     result: Bob[];
 }
 
 const createOutputsCredentials = async (params: CreateOutputsCredentials): Promise<Bob[]> => {
-    const { round, amounts, outputSize, amountCredentials, vsizeCredentials, options } = params;
+    const { round, outputs, amountCredentials, vsizeCredentials, options } = params;
     const { roundParameters } = round;
 
-    // sort amounts ascending. smaller amounts should produce bigger change Credentials for next iteration
-    const sorted = amounts.sort((a, b) => a - b);
+    // sort outputs ascending. smaller amounts should produce bigger change Credentials for next iteration
+    const sorted = outputs.toSorted((a, b) => a.amount - b.amount);
 
     // try to find Credentials for each amount
-    const amountsWithCredentials = sorted.map(amount => ({
-        amount,
+    const outputsWithCredentials = sorted.map(output => ({
+        output,
         credentials: findCredentialsForTarget(
-            amount,
+            output.amount,
             amountCredentials,
             roundParameters.MaxAmountCredentialValue,
         ),
     }));
 
     // get first available set and spilt in to output and change
-    const amountPair = amountsWithCredentials.find(c => c.credentials);
-    const vsizePair = findCredentialsForTarget(
-        outputSize,
-        vsizeCredentials,
-        round.roundParameters.MaxVsizeAllocationPerAlice,
-    );
+    const amountPair = outputsWithCredentials.find(c => c.credentials);
+    const vsizePair =
+        amountPair &&
+        findCredentialsForTarget(
+            amountPair.output.vsize,
+            vsizeCredentials,
+            round.roundParameters.MaxVsizeAllocationPerAlice,
+        );
 
     if (amountPair?.credentials && vsizePair) {
+        const { output } = amountPair;
         const availableAmount = sumCredentials(amountPair.credentials);
         const availableVsize = sumCredentials(vsizePair);
         const joined = await credentialIssuance({
             ...params,
-            amountToRequest: [amountPair.amount, availableAmount - amountPair.amount],
+            amountToRequest: [output.amount, availableAmount - output.amount],
             amountCredentials: amountPair.credentials,
-            vsizeToRequest: [outputSize, availableVsize - outputSize],
+            vsizeToRequest: [output.vsize, availableVsize - output.vsize],
             vsizeCredentials: vsizePair,
         });
 
@@ -333,16 +338,14 @@ const createOutputsCredentials = async (params: CreateOutputsCredentials): Promi
         const result = params.result.concat([
             {
                 accountKey: params.accountKey,
-                amount: amountPair.amount,
+                ...output,
                 amountCredentials: joined.output.amountCredentials,
                 vsizeCredentials: joined.output.vsizeCredentials,
             },
         ]);
 
-        // remove amount from list
-        const amountIndex = amounts.findIndex(a => a === amountPair.amount);
-        const updatedAmounts = amounts.slice(0);
-        updatedAmounts.splice(amountIndex, 1);
+        // remove output from list
+        const updatedOutputs = outputs.filter(o => o !== output);
 
         // update credentials list:
         // - remove joined Credentials used by credentialIssuance process
@@ -354,7 +357,7 @@ const createOutputsCredentials = async (params: CreateOutputsCredentials): Promi
             .filter(cre => !vsizePair.includes(cre))
             .concat(joined.change.vsizeCredentials);
 
-        if (updatedAmounts.length === 0) {
+        if (updatedOutputs.length === 0) {
             // no more amounts, check whats left
             const amountDust = sumCredentials(updatedAmountCredentials);
             const vsizeDust = sumCredentials(updatedVsizeCredentials);
@@ -369,7 +372,7 @@ const createOutputsCredentials = async (params: CreateOutputsCredentials): Promi
         // try to create another output
         return createOutputsCredentials({
             ...params,
-            amounts: updatedAmounts,
+            outputs: updatedOutputs,
             amountCredentials: updatedAmountCredentials,
             vsizeCredentials: updatedVsizeCredentials,
             result,
@@ -511,21 +514,18 @@ export const outputDecomposition = async (
     // join inputs Credentials for each account separately
     const joinedCredentials = await Promise.all(
         Object.keys(groupInputsByAccount).map((accountKey, index) => {
-            const amounts = outputAmounts[index];
-            if (!amounts) return; // The account failed.
+            const outputs = outputAmounts[index];
+            if (!outputs) return; // The account failed.
 
-            logger.info(`Create outputs: ${formatRedactedValues(amounts)}`);
+            logger.info(`Create outputs: ${formatRedactedValues(outputs.map(o => o.amount))}`);
             // @ts-expect-error: indexing with noUncheckedIndexedAccess
             const inputs: (typeof groupInputsByAccount)[string] = groupInputsByAccount[accountKey];
             const amountCredentials = inputs.flatMap(i => i.confirmedAmountCredentials!);
             const vsizeCredentials = inputs.flatMap(i => i.confirmedVsizeCredentials!);
-            // @ts-expect-error: indexing with noUncheckedIndexedAccess
-            const firstInputForSize: (typeof inputs)[number] = inputs[0];
             const result = createOutputsCredentials({
                 round,
                 accountKey,
-                outputSize: firstInputForSize.outputSize, // all inputs are using same script type (size),
-                amounts,
+                outputs,
                 amountCredentials,
                 vsizeCredentials,
                 options,
