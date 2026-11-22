@@ -32,6 +32,9 @@ jest.mock('@suite-common/trading', () => {
     };
 });
 
+// Suite Dark: the fork hides trading; these tests cover upstream's trading UI.
+jest.mock('@suite/regions/src/trading.suite-dark', () => ({ IS_TRADING_HIDDEN: false }));
+
 type TokensTableState = MessageSystemRootState & SuiteSettingsRootState;
 
 const ETH = asNetworkSymbol('eth');

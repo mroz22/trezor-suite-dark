@@ -16,7 +16,13 @@ import {
 
 import { type GuideState } from './guideState';
 
-const indexNode = indexNodeJSON as GuideCategory;
+const upstreamIndexNode = indexNodeJSON as GuideCategory;
+
+// Suite Dark: no trading, so the Guide and its search leave out the Buy, Sell & Swap articles.
+const indexNode: GuideCategory = {
+    ...upstreamIndexNode,
+    children: upstreamIndexNode.children.filter(({ id }) => id !== '/4_buy-sell-and-exchange'),
+};
 
 export const initialState: GuideState = {
     open: false,

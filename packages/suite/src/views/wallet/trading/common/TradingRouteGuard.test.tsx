@@ -19,6 +19,9 @@ jest.mock('@suite/intl', () => ({
     Translation: ({ id }: TranslationMockProps) => <span>{id}</span>,
 }));
 
+// Suite Dark: the fork hides trading; these tests cover upstream's trading UI.
+jest.mock('@suite/regions/src/trading.suite-dark', () => ({ IS_TRADING_HIDDEN: false }));
+
 const RESTRICTED_CONTENT: Localization = {
     en: 'Restricted by message',
     es: '',

@@ -8,7 +8,8 @@ import { selectIsRegionRestricted } from './regionsSelectors';
 describe(selectIsRegionRestricted.name, () => {
     it.each([
         ['restricted: Czech language with CZ listed', 'cs-CZ', true],
-        ['not restricted: English language with CZ listed', 'en-US', false],
+        // Suite Dark: trading is hidden, so a country that is not listed is restricted too.
+        ['restricted: English language with CZ listed', 'en-US', true],
     ] as const satisfies [string, Locale, boolean][])('%s', (_description, language, expected) => {
         const state = {
             messageSystem: mockMessageSystemStateWithFeatureFlags(
