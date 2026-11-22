@@ -1,4 +1,4 @@
-import { redacted } from './redacted';
+import { formatRedactedValues, redacted } from './redacted';
 
 test('redacted', () => {
     expect(redacted('~~bcrt1qejqxwzfld7zr6mf7ygqy5s5se5xq7vmt8ntmj0~~')).toEqual(
@@ -16,4 +16,9 @@ test('redacted', () => {
 
     // @ts-expect-error
     expect(redacted(undefined)).toEqual('undefined');
+});
+
+test('formatRedactedValues', () => {
+    expect(redacted(formatRedactedValues([100062, 5000]))).toEqual('[redacted],[redacted]');
+    expect(redacted(`Amounts: ${formatRedactedValues([])}`)).toEqual('Amounts: ');
 });

@@ -108,7 +108,7 @@ const registerOutput = async (
                         // @ts-expect-error: indexing with noUncheckedIndexedAccess
                         const firstCred: (typeof amountCredentials)[number] = amountCredentials[0];
                         logger.error(
-                            `NotEnoughFunds. Amount: ${firstCred.Value} Delta: ${outputAmountCredentials.CredentialsRequest.Delta} FeeRate: ${roundParameters.MiningFeeRate}`,
+                            `NotEnoughFunds. Amount: ~~${firstCred.Value}~~ Delta: ~~${outputAmountCredentials.CredentialsRequest.Delta}~~ FeeRate: ${roundParameters.MiningFeeRate}`,
                         );
                     }
                 }
