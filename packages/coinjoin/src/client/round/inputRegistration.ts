@@ -6,6 +6,7 @@ import { ROUND_SELECTION_REGISTRATION_OFFSET } from '../../constants';
 import { SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
 import type { AliceShape } from '../../types/alice';
 import type { CoinjoinRoundOptions, CoinjoinRoundShape } from '../../types/round';
+import { getInputFees } from '../../utils/coordinatorUtils';
 import * as coordinator from '../coordinator';
 
 /**
@@ -116,14 +117,13 @@ const registerInput = async (
         });
 
     // Calculate mining and coordinator fee
-    // coordinator fee is 0 if input is remixed or amount is lower than or equal to plebsDontPayThreshold value
     const { roundParameters } = round;
-    const coordinatorFee =
-        input.amount > roundParameters.CoordinationFeeRate.PlebsDontPayThreshold &&
-        !registrationData.IsPayingZeroCoordinationFee
-            ? Math.floor(roundParameters.CoordinationFeeRate.Rate * input.amount)
-            : 0;
-    const miningFee = Math.floor((input.inputSize * roundParameters.MiningFeeRate) / 1000);
+    const { coordinatorFee, miningFee } = getInputFees({
+        amount: input.amount,
+        inputSize: input.inputSize,
+        roundParameters,
+        isPayingZeroCoordinationFee: registrationData.IsPayingZeroCoordinationFee,
+    });
     const amount = input.amount - coordinatorFee - miningFee;
     const vsize = roundParameters.MaxVsizeAllocationPerAlice - input.inputSize;
 
