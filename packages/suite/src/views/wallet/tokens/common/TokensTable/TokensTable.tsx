@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { Translation } from '@suite/intl';
+import { selectIsRegionRestricted } from '@suite/regions';
 import { type YieldDtoV2 } from '@suite-common/earn-stablecoin-api';
 import { type TokenInfo, type TokenManagementAction } from '@suite-common/token-definitions';
 import { tradingThunks } from '@suite-common/trading';
@@ -9,6 +10,8 @@ import { type Account } from '@suite-common/wallet-types';
 import { Card, Paragraph, Table } from '@trezor/components';
 import { useServices } from '@trezor/dependency-injection';
 import { injectDispatch } from '@trezor/redux-utils';
+
+import { useSelector } from '#src/hooks/suite/useSelector';
 
 import { TokenRow } from './TokenRow';
 import type { TokensTableType } from './types';
@@ -53,10 +56,13 @@ export const TokensTable = ({
 }: TokensTableProps) => {
     const { dispatch } = useServices(injectDispatch);
     const [isZeroBalanceOpen, setIsZeroBalanceOpen] = useState(false);
+    const isRegionRestricted = useSelector(selectIsRegionRestricted);
 
     useEffect(() => {
+        if (isRegionRestricted) return;
+
         dispatch(tradingThunks.loadInitialDataThunk({ activeSection: 'buy' }));
-    }, [dispatch]);
+    }, [dispatch, isRegionRestricted]);
 
     return (
         <Card paddingType="none">
