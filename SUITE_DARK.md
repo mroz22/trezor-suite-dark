@@ -92,7 +92,8 @@ plain `develop` together with the coinjoin commits listed above it, so offer the
 trading catalog fix (2026-11-21) stops the Tokens tab and the asset detail header from loading the trading catalog
 from `exchange.trezor.io` where `selectIsRegionRestricted` hides trading, as the dashboard already does; Suite Dark
 needs it for "hide trading". The coordinator list (2026-11-21: the Status fix, the selector refactor and the feature)
-builds on the coinjoin commits, so offer it after them, in this order. The Status fix went upstream alone on
+builds on the coinjoin commits, so offer it after them, in this order. The read-only recommended settings
+(2026-11-23) build on the coordinator list. The Status fix went upstream alone on
 2026-11-23, on plain `develop` and with only its own test; when upstream merges it, drop the fork commit by hand,
 because its test in the fork sits next to the round id test of an earlier coinjoin commit.
 
@@ -116,6 +117,7 @@ because its test in the fork sits next to the round id test of an earlier coinjo
 | `fix(coinjoin): end rounds that disappear from the status`                  | fix      | [35387](https://github.com/trezor/trezor-suite/pull/35387) | open        |
 | `refactor(coinjoin): read the client settings through one selector`         | refactor | none                                                       | not offered |
 | `feat(coinjoin): choose the coinjoin coordinator from a list`               | feature  | none                                                       | not offered |
+| `feat(coinjoin): show the recommended coinjoin settings read-only`          | feature  | none                                                       | not offered |
 
 ## Development branches
 
@@ -180,7 +182,9 @@ Ask the owner before reversing any of these.
   blame rounds.
   Users choose the coordinator from the list in the build, in a Privacy account's Coinjoin setup, one choice per
   network for all its Privacy accounts, and the choice is kept
-  (2026-11-21). No automatic switch to another coordinator, no detection of a coordinator that stops responding
+  (2026-11-21). The Coinjoin setup always shows its settings, the coordinator included: Recommended shows the
+  values a session uses, read-only, and keeps the network's coordinator choice; Custom makes them editable
+  (2026-11-23). No automatic switch to another coordinator, no detection of a coordinator that stops responding
   while Suite runs (only the check when the client starts, the rest goes to the log) and no custom coordinator
   address for now. Which coordinators the list names is the owner's decision; OpenCoordinator was added on
   2026-11-22. Suite Dark contacts it only once the user chooses it.
