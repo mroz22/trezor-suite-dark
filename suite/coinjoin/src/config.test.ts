@@ -26,11 +26,21 @@ describe('getCoinjoinConfig', () => {
         warnSpy.mockRestore();
     });
 
-    it('btc has the Suite Dark coordinator, test has none, regtest has a local one', () => {
+    it('btc lists the Suite Dark coordinators, test none, regtest a local one', () => {
         expect(getCoinjoinConfig(btcSymbol).coordinatorUrl).toBe(
             'https://coinjoin.kruw.io/wabisabi/',
         );
         expect(getCoinjoinConfig(btcSymbol).wabisabiBackendUrl).toBeUndefined();
+        expect(getCoinjoinConfig(btcSymbol).maxCoordinatorFeeRate).toBe(0);
+        expect(getCoinjoinCoordinators(btcSymbol)).toEqual([
+            expect.objectContaining({ coordinatorUrl: 'https://coinjoin.kruw.io/wabisabi/' }),
+            {
+                coordinatorUrl: 'https://api.opencoordinator.org/wabisabi/',
+                coordinatorName: 'CoinJoinCoordinatorIdentifier',
+                maxCoordinatorFeeRate: 0,
+            },
+        ]);
+        expect(getCoinjoinConfig(testSymbol).maxCoordinatorFeeRate).toBeUndefined();
         expect(getCoinjoinConfig(testSymbol).coordinatorUrl).toBeUndefined();
         expect(getCoinjoinConfig(testSymbol).wabisabiBackendUrl).toBeUndefined();
         expect(getCoinjoinConfig(regtestSymbol).coordinatorUrl).toBeDefined();
