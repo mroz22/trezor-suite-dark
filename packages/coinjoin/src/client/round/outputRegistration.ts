@@ -22,18 +22,12 @@ import type { Account } from '../Account';
  * - Finally call /ready-to-sign on coordinator for each input
  */
 
-const registerOutput = async (
+const getOutputCredentialRequests = async (
     round: CoinjoinRoundShape,
-    { accountKey, changeAddresses, scriptType }: Account,
     { amountCredentials, vsizeCredentials }: Bob,
-    assignedAddresses: AccountAddress[],
-    options: CoinjoinRoundOptions,
+    { signal, middlewareUrl }: CoinjoinRoundOptions,
 ) => {
-    const { roundParameters, phaseDeadline } = round;
-    const { signal, coordinatorUrl, middlewareUrl, logger } = options;
-
-    const remainingTime = phaseDeadline - Date.now();
-    const delay = scheduleDelay(Math.floor(remainingTime * 0.8));
+    const { roundParameters } = round;
 
     const outputAmountCredentials = await middleware.getRealCredentials(
         [], // NOTE: sending empty amountToRequest **will not** create credentialToRequest object which **should not** be sent to coordinator in output-registration request
@@ -48,6 +42,29 @@ const registerOutput = async (
         round.vsizeCredentialIssuerParameters,
         roundParameters.MaxVsizeAllocationPerAlice,
         { signal, baseUrl: middlewareUrl },
+    );
+
+    return { outputAmountCredentials, outputVsizeCredentials };
+};
+
+const registerOutput = async (
+    round: CoinjoinRoundShape,
+    { accountKey, changeAddresses, scriptType }: Account,
+    bob: Bob,
+    assignedAddresses: AccountAddress[],
+    options: CoinjoinRoundOptions,
+) => {
+    const { roundParameters, phaseDeadline } = round;
+    const { signal, coordinatorUrl, logger } = options;
+    const { amountCredentials } = bob;
+
+    const remainingTime = phaseDeadline - Date.now();
+    const delay = scheduleDelay(Math.floor(remainingTime * 0.8));
+
+    const { outputAmountCredentials, outputVsizeCredentials } = await getOutputCredentialRequests(
+        round,
+        bob,
+        options,
     );
 
     const isUnassigned = (address: AccountAddress) => !assignedAddresses.includes(address);
