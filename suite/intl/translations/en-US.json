@@ -2903,6 +2903,7 @@
   "TR_TRADING_RECEIVE_NO_ACCOUNT_TITLE": "No account",
   "TR_TRADING_RECEIVE_SELECT_ACCOUNT": "Select account",
   "TR_TRADING_RECEIVE_USE_EXTERNAL_ACCOUNT": "Use external account",
+  "TR_TRADING_RESTRICTED": "Trading is not available in Suite Dark.",
   "TR_TRADING_REVIEW_SWAP": "Review your swap",
   "TR_TRADING_SELL": "Sell",
   "TR_TRADING_SELL_VIA": "Sell with {providerName}",

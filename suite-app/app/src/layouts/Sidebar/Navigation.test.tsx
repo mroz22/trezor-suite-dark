@@ -54,6 +54,9 @@ jest.mock('@trezor/suite', () => ({
     QuickActions: () => <div data-testid="quick-actions" />,
 }));
 
+// Suite Dark: the fork hides trading; these tests cover upstream's trading UI.
+jest.mock('@suite/regions/src/trading.suite-dark', () => ({ IS_TRADING_HIDDEN: false }));
+
 const flagsReducer = prepareFlagsReducer(mockExtraDependenciesForReducers);
 const analytics = mockDesktopAnalytics();
 const services: DesktopAnalyticsDep & SuiteRouterHistoryDep = {
