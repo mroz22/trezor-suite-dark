@@ -370,7 +370,7 @@ export const messages = defineMessages({
         id: 'TR_TRADING_ALL_DISABLED_DESCRIPTION',
     },
     TR_TRADING_RESTRICTED: {
-        defaultMessage: 'Trading is not available in your region.',
+        defaultMessage: 'Trading is not available in Suite Dark.',
         id: 'TR_TRADING_RESTRICTED',
     },
     TR_TRADING_HEADER_DESCRIPTION: {
