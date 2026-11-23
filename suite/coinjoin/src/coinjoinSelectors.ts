@@ -21,6 +21,11 @@ import { ROUND_MIN_INPUT_COUNT } from '@trezor/coinjoin/src/constants';
 import { createWeakMapSelector } from '@trezor/redux-utils';
 import { BigNumber, deepEqual } from '@trezor/utils';
 
+import {
+    type CoinjoinPaymentAvailabilityRootState,
+    selectIsCoinjoinPaymentAvailableByAccountKey,
+} from './coinjoinPaymentAvailability';
+import { hasCoinjoinPaymentToMix } from './coinjoinPaymentUtils';
 import { type CoinjoinState } from './coinjoinTypes';
 import {
     breakdownCoinjoinBalance,
@@ -429,7 +434,8 @@ export const selectMinAllowedInputWithFee = (state: CoinjoinRootState, accountKe
 };
 
 export const selectIsNothingToAnonymizeByAccountKey = (
-    state: AccountsRootState & CoinjoinRootState,
+    // Suite Dark: pay in coinjoin, payment availability reads the device and wallet settings.
+    state: AccountsRootState & CoinjoinRootState & CoinjoinPaymentAvailabilityRootState,
     accountKey: AccountKey,
 ) => {
     const minAllowedInputWithFee = selectMinAllowedInputWithFee(state, accountKey);
@@ -439,6 +445,15 @@ export const selectIsNothingToAnonymizeByAccountKey = (
 
     const anonymitySet = account?.addresses?.anonymitySet || {};
     const utxos = account?.utxo || [];
+
+    // Suite Dark: pay in coinjoin, a payment still needs a round. One that became unavailable
+    // still counts in the account's critical phase, so that updateClientAccountThunk does not end
+    // the session in the middle of the round.
+    const { payment, session } = selectCoinjoinAccountByKey(state, accountKey) ?? {};
+    const isAvailable =
+        selectIsCoinjoinPaymentAvailableByAccountKey(state, accountKey) ||
+        isRoundPhaseCritical(session?.roundPhase);
+    if (hasCoinjoinPaymentToMix({ payment, session, utxos, isAvailable })) return false;
 
     // Return true if all non-private funds are too small.
     return utxos
@@ -525,7 +540,9 @@ export const selectCoinjoinSessionBlockerByAccountKey = (
         MessageSystemRootState &
         SelectedAccountRootState &
         SuiteOnlineRootState &
-        TorRootState,
+        TorRootState &
+        // Suite Dark: pay in coinjoin, payment availability reads the device and wallet settings.
+        CoinjoinPaymentAvailabilityRootState,
     accountKey: AccountKey | null,
 ) => {
     if (accountKey === null) {
@@ -572,7 +589,9 @@ export const selectCurrentCoinjoinWheelStates = (
         MessageSystemRootState &
         SelectedAccountRootState &
         SuiteOnlineRootState &
-        TorRootState,
+        TorRootState &
+        // Suite Dark: pay in coinjoin, payment availability reads the device and wallet settings.
+        CoinjoinPaymentAvailabilityRootState,
 ) => {
     const { notAnonymized } = selectCurrentCoinjoinBalanceBreakdown(state);
     const { key, balance } = selectSelectedAccount(state) || {};
@@ -594,7 +613,15 @@ export const selectCurrentCoinjoinWheelStates = (
     // account states
     const isAccountEmpty = !balance || balance === '0';
     const isNonePrivate = sessionProgress === 0;
-    const isAllPrivate = notAnonymized === '0';
+    // Suite Dark: pay in coinjoin, a payment still needs a round.
+    const isAllPrivate =
+        notAnonymized === '0' &&
+        !hasCoinjoinPaymentToMix({
+            payment: coinjoinAccount?.payment,
+            session: coinjoinAccount?.session,
+            utxos: selectSelectedAccount(state)?.utxo,
+            isAvailable: selectIsCoinjoinPaymentAvailableByAccountKey(state, key),
+        });
     const isCoinjoinUneco = !!balance && new BigNumber(balance).lt(UNECONOMICAL_COINJOIN_THRESHOLD);
 
     const agreedToLegalDocumentVersions = coinjoinAccount?.agreedToLegalDocumentVersions;

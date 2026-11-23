@@ -1,17 +1,31 @@
+import { type SelectedAccountState } from '@suite/account';
+import { locksInitialState } from '@suite/locks';
+import { TorStatus } from '@suite/tor';
+import { messageSystemInitialState } from '@suite-common/message-system';
 import { testMocks } from '@suite-common/test-utils';
 import { asNetworkSymbol } from '@suite-common/wallet-config';
 import { type AccountsRootState } from '@suite-common/wallet-core';
 import { mockAccountKey, mockWalletAccount } from '@suite-common/wallet-types/mocks';
 import { RoundPhase } from '@trezor/coinjoin';
 
+import {
+    ANCHOR_UTXO,
+    type GetPaymentStateParams,
+    PAYMENT,
+    ACCOUNT as PAYMENT_ACCOUNT,
+    SESSION as PAYMENT_SESSION,
+    getPaymentState,
+} from './__fixtures__/coinjoinPayment';
 import { initialState } from './coinjoinReducer';
 import {
     type CoinjoinRootState,
     selectCoinjoinMinInputCountBySymbol,
     selectCoinjoinNetworkConfig,
     selectCoordinatorFeeRateCapBySymbol,
+    selectCurrentCoinjoinWheelStates,
     selectHasCoinjoinSessionBySymbol,
     selectIsCoinjoinCoordinatorOverriddenBySymbol,
+    selectIsNothingToAnonymizeByAccountKey,
     selectMaxCoordinatorFeeRateByAccountKey,
     selectRegisteredUtxosByAccountKey,
 } from './coinjoinSelectors';
@@ -373,5 +387,83 @@ describe('selectRegisteredUtxosByAccountKey', () => {
         };
 
         expect(select({ prison })).toEqual(prison);
+    });
+});
+
+// Suite Dark: pay in coinjoin.
+describe('selectIsNothingToAnonymizeByAccountKey with a payment', () => {
+    const isNothingToAnonymize = (params: GetPaymentStateParams) =>
+        selectIsNothingToAnonymizeByAccountKey(getPaymentState(params), PAYMENT_ACCOUNT.key);
+
+    it('mixes all private coins while a payment or a cancelled one needs a round', () => {
+        expect(isNothingToAnonymize({ payment: null })).toBe(true);
+        expect(isNothingToAnonymize({})).toBe(false);
+        expect(isNothingToAnonymize({ payment: { ...PAYMENT, isCancelled: true } })).toBe(false);
+    });
+
+    it('mixes the anchor of a cancelled payment that is no longer available, but no other', () => {
+        expect(
+            isNothingToAnonymize({
+                payment: { ...PAYMENT, isCancelled: true },
+                isAutoEjectEnabled: true,
+            }),
+        ).toBe(false);
+        expect(isNothingToAnonymize({ isAutoEjectEnabled: true })).toBe(true);
+    });
+
+    it('still mixes a payment that became unavailable in the critical phase of its round', () => {
+        expect(
+            isNothingToAnonymize({
+                isAutoEjectEnabled: true,
+                session: {
+                    ...PAYMENT_SESSION,
+                    authorizedPaymentId: PAYMENT.id,
+                    roundPhase: RoundPhase.ConnectionConfirmation,
+                },
+            }),
+        ).toBe(false);
+    });
+
+    it('has nothing to mix for a paid or blocked payment or an anchor spent in the mempool', () => {
+        expect(isNothingToAnonymize({ payment: { ...PAYMENT, paidTxid: 'b2'.repeat(32) } })).toBe(
+            true,
+        );
+        expect(isNothingToAnonymize({ payment: { ...PAYMENT, isBlocked: true } })).toBe(true);
+        expect(
+            isNothingToAnonymize({
+                accounts: [{ ...PAYMENT_ACCOUNT, utxo: [{ ...ANCHOR_UTXO, confirmations: 0 }] }],
+            }),
+        ).toBe(true);
+    });
+});
+
+// Suite Dark: pay in coinjoin.
+describe('selectCurrentCoinjoinWheelStates with a payment', () => {
+    const isAllPrivate = (params: GetPaymentStateParams) => {
+        const paymentState = getPaymentState(params);
+        const [account = PAYMENT_ACCOUNT] = params.accounts ?? [];
+
+        return selectCurrentCoinjoinWheelStates({
+            ...paymentState,
+            locks: locksInitialState,
+            messageSystem: messageSystemInitialState,
+            suite: { online: true },
+            tor: { torStatus: TorStatus.Enabled, torBootstrap: null },
+            wallet: {
+                ...paymentState.wallet,
+                selectedAccount: { status: 'loaded', account } as SelectedAccountState,
+            },
+        }).isAllPrivate;
+    };
+
+    it('is not all private while a payment needs a round', () => {
+        expect(isAllPrivate({ payment: null })).toBe(true);
+        expect(isAllPrivate({})).toBe(false);
+        expect(isAllPrivate({ payment: { ...PAYMENT, isCancelled: true } })).toBe(false);
+    });
+
+    it('is all private once the payment needs no round or is no longer available', () => {
+        expect(isAllPrivate({ payment: { ...PAYMENT, isBlocked: true } })).toBe(true);
+        expect(isAllPrivate({ isAutoEjectEnabled: true })).toBe(true);
     });
 });

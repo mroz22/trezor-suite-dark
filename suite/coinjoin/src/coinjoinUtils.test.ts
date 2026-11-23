@@ -2,9 +2,11 @@ import { testMocks } from '@suite-common/test-utils';
 import { asNetworkSymbol } from '@suite-common/wallet-config';
 import type { Account } from '@suite-common/wallet-types';
 import { mockWalletAccount } from '@suite-common/wallet-types/mocks';
+import { getUtxoOutpoint } from '@suite-common/wallet-utils';
 import { DISCOVERY_LOOKOUT } from '@trezor/coinjoin';
 
 import * as fixtures from './__fixtures__/coinjoinUtils';
+import { type CoinjoinAccountPayment } from './coinjoinTypes';
 import * as coinjoinUtils from './coinjoinUtils';
 
 describe('breakdownCoinjoinBalance', () => {
@@ -128,6 +130,79 @@ describe('getRegisterAccountParams', () => {
         expect(getChangeAddressIndexes(account)).toEqual(
             getIndexes(11, 30).filter(index => index !== 12),
         );
+    });
+
+    // Suite Dark: pay in coinjoin.
+    describe('with a payment', () => {
+        const anchorUtxo = testMocks.getUtxo({
+            txid: '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+            vout: 1,
+            address: 'bc1p20',
+            path: "m/10025'/0'/0'/1'/1/20",
+        });
+        const otherUtxo = testMocks.getUtxo({ txid: 'b2'.repeat(32), vout: 0, address: 'bc1p40' });
+        const anchor = getUtxoOutpoint(anchorUtxo);
+        const payment: CoinjoinAccountPayment = {
+            id: 'payment1',
+            address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
+            amount: 50_000,
+            anchor,
+            attemptTxids: [],
+        };
+        const account = createAccount([10], [anchorUtxo, otherUtxo]);
+        const getParams = (
+            accountPayment: CoinjoinAccountPayment,
+            authorizedPaymentId?: string,
+            isPaymentAvailable = true,
+        ) =>
+            coinjoinUtils.getRegisterAccountParams(account, {
+                rawLiquidityClue: null,
+                session: { ...SESSION, authorizedPaymentId },
+                payment: accountPayment,
+                isPaymentAvailable,
+            });
+
+        it('passes the payment the device authorized', () => {
+            const params = getParams(payment, payment.id);
+
+            expect(params.payment).toEqual({
+                id: payment.id,
+                address: payment.address,
+                amount: payment.amount,
+                anchor,
+            });
+            expect(params.utxos.map(({ outpoint }) => outpoint)).toContain(anchor);
+        });
+
+        it.each([
+            ['a payment the device did not authorize', payment, 'other', true],
+            ['a blocked payment', { ...payment, isBlocked: true }, payment.id, true],
+            ['a payment that is no longer available', payment, payment.id, false],
+        ])(
+            'holds back the anchor of %s',
+            (_name, accountPayment, authorizedPaymentId, isAvailable) => {
+                const params = getParams(accountPayment, authorizedPaymentId, isAvailable);
+
+                expect(params.payment).toBeUndefined();
+                expect(params.utxos.map(({ outpoint }) => outpoint)).toEqual([
+                    getUtxoOutpoint(otherUtxo),
+                ]);
+                // The address of the anchor, within the change addresses the client gets, still gets
+                // no change output.
+                expect(params.changeAddresses.map(({ address }) => address)).toEqual(
+                    getIndexes(11, 30)
+                        .filter(index => index !== 20)
+                        .map(index => `bc1p${index}`),
+                );
+            },
+        );
+
+        it('passes a cancelled payment and mixes its anchor, also when it is no longer available', () => {
+            const params = getParams({ ...payment, isCancelled: true }, undefined, false);
+
+            expect(params.payment).toMatchObject({ id: payment.id, isCancelled: true });
+            expect(params.utxos.map(({ outpoint }) => outpoint)).toContain(anchor);
+        });
     });
 });
 

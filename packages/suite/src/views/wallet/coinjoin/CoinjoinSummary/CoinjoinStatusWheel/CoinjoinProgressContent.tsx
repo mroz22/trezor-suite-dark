@@ -3,6 +3,7 @@ import { FormattedNumber } from 'react-intl';
 import styled from 'styled-components';
 
 import {
+    selectCoinjoinPaymentToAuthorizeByAccountKey,
     selectCurrentCoinjoinWheelStates,
     selectCurrentSessionDeadlineInfo,
     selectRoundsDurationInHours,
@@ -84,6 +85,12 @@ export const CoinjoinProgressContent = ({
 
     const { coinjoinSessionBlocker, isCoinjoinSessionBlocked } =
         useCoinjoinSessionBlockers(accountKey);
+    // Suite Dark: pay in coinjoin, a paused session with a payment to authorize is not restored
+    // automatically and waits for the Resume of the payment card. On hover the wheel offers Stop.
+    const hasPaymentToAuthorize = useSelector(
+        state => !!selectCoinjoinPaymentToAuthorizeByAccountKey(state, accountKey),
+    );
+    const isWaitingForPaymentResume = isPaused && hasPaymentToAuthorize && !isWheelHovered;
 
     const getProgressContent = () => {
         const iconConfig = {
@@ -93,9 +100,14 @@ export const CoinjoinProgressContent = ({
 
         const isLoadingIndicatorShown =
             isLoading ||
-            (isSessionActive && !sessionDeadline && !isCoinjoinSessionBlocked && !isWheelHovered);
+            (isSessionActive &&
+                !sessionDeadline &&
+                !isCoinjoinSessionBlocked &&
+                !isWheelHovered &&
+                !isWaitingForPaymentResume);
         const isRunningAndHovered = isSessionActive && isWheelHovered;
-        const isRunningAndBlocked = isSessionActive && isCoinjoinSessionBlocked && isPaused;
+        const isRunningAndBlocked =
+            isSessionActive && (isCoinjoinSessionBlocked || isWaitingForPaymentResume) && isPaused;
 
         if (isAccountEmpty || coinjoinSessionBlocker === 'ANONYMITY_ERROR') {
             return <Icon as={PlayIcon} margin={{ bottom: 4, left: 4 }} {...iconConfig} />;

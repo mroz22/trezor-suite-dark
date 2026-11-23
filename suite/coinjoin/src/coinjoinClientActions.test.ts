@@ -29,12 +29,28 @@ import { mockSetAccountAddMetadata } from '@suite-common/wallet-core/mocks';
 import '@suite-common/test-utils/globalOverrides';
 import { asAccountDescriptor } from '@suite-common/wallet-types';
 import { mockAccountKey, mockWalletAccount } from '@suite-common/wallet-types/mocks';
-import { EndRoundState, RoundPhase, SessionPhase } from '@trezor/coinjoin';
+import {
+    type CoinjoinPaymentAttempt,
+    type CoinjoinRequestSignatureEvent,
+    EndRoundState,
+    RoundPhase,
+    type SerializedCoinjoinRound,
+    SessionPhase,
+} from '@trezor/coinjoin';
 import { type StaticSessionId } from '@trezor/device-utils';
 import { mockActionType, mockReducer } from '@trezor/redux-utils/mocks';
 import { promiseAllSequence } from '@trezor/utils';
 
 import * as fixtures from './__fixtures__/coinjoinClientActions';
+import {
+    ANCHOR,
+    ANCHOR_TXID,
+    ANCHOR_UTXO,
+    PAYMENT,
+    ACCOUNT as PAYMENT_ACCOUNT,
+    PAYMENT_DEVICE,
+    SESSION as PAYMENT_SESSION,
+} from './__fixtures__/coinjoinPayment';
 import {
     chooseCoinjoinCoordinatorThunk,
     clientEmitException,
@@ -815,5 +831,156 @@ describe('coinjoinClientActions', () => {
 
         cli?.client.emit('log', { level: 'warn', payload: 'Warn' });
         cli?.client.emit('log', { level: 'error', payload: 'Error' });
+    });
+
+    // Suite Dark: pay in coinjoin.
+    describe('pay in coinjoin', () => {
+        const ATTEMPT: CoinjoinPaymentAttempt = {
+            accountKey: PAYMENT_ACCOUNT.key,
+            paymentId: PAYMENT.id,
+            address: PAYMENT.address,
+            amount: PAYMENT.amount,
+            anchor: ANCHOR,
+            txid: 'd4'.repeat(32),
+            inputs: [ANCHOR],
+        };
+        const ANCHOR_PATH = "m/10025'/0'/0'/1'/0/0";
+
+        const getSignatureRequest = (
+            payments: CoinjoinPaymentAttempt[],
+        ): CoinjoinRequestSignatureEvent => ({
+            type: 'signature',
+            roundId: '01',
+            inputs: [{ accountKey: PAYMENT_ACCOUNT.key, path: ANCHOR_PATH, outpoint: ANCHOR }],
+            transaction: {
+                inputs: [
+                    {
+                        path: ANCHOR_PATH,
+                        outpoint: ANCHOR,
+                        amount: 300_000,
+                        hash: ANCHOR_TXID,
+                        index: 1,
+                        commitmentData: '',
+                        address: ANCHOR_UTXO.address,
+                        scriptPubKey: '',
+                        ownershipProof: '',
+                    },
+                ],
+                outputs: [{ address: PAYMENT.address, scriptPubKey: '', amount: PAYMENT.amount }],
+                coinjoinRequest: { fee_rate: 0, no_fee_threshold: 0, min_registrable_amount: 5000 },
+            },
+            liquidityClues: [],
+            payments,
+        });
+
+        type InitPaymentStoreParams = {
+            session?: CoinjoinSession;
+            device?: TrezorDevice;
+        };
+
+        const initPaymentStore = ({
+            session = { ...PAYMENT_SESSION, authorizedPaymentId: PAYMENT.id },
+            device = PAYMENT_DEVICE,
+        }: InitPaymentStoreParams = {}) =>
+            initStore({
+                accounts: [PAYMENT_ACCOUNT],
+                coinjoin: {
+                    ...coinjoinInitialState,
+                    accounts: [
+                        {
+                            key: PAYMENT_ACCOUNT.key,
+                            symbol: btcSymbol,
+                            rawLiquidityClue: null,
+                            payment: PAYMENT,
+                            session,
+                        },
+                    ],
+                },
+                device: { devices: [device], selectedDevice: device, buttonRequestsByPath: {} },
+            });
+        const getPayment = (store: ReturnType<typeof initStore>) =>
+            store.getState().wallet.coinjoin.accounts[0]?.payment;
+
+        it('stores the attempt before the account signs', async () => {
+            const store = initPaymentStore();
+            let attemptTxidsWhenSigning: string[] | undefined;
+            testMocks.setTrezorConnectFixtures([
+                () => {
+                    attemptTxidsWhenSigning = getPayment(store)?.attemptTxids;
+
+                    return { success: true, payload: { signatures: ['signature'] } };
+                },
+            ]);
+
+            const [response] = await store.dispatch(
+                onCoinjoinClientRequest([getSignatureRequest([ATTEMPT])]),
+            );
+
+            expect(attemptTxidsWhenSigning).toEqual([ATTEMPT.txid]);
+            expect(response).toMatchObject({
+                inputs: [{ outpoint: ANCHOR, signature: 'signature' }],
+            });
+        });
+
+        it.each<[string, InitPaymentStoreParams, CoinjoinPaymentAttempt]>([
+            ['of another payment', {}, { ...ATTEMPT, paymentId: 'other' }],
+            ['of a payment the session did not authorize', { session: PAYMENT_SESSION }, ATTEMPT],
+            [
+                'on a wallet that is not remembered',
+                { device: { ...PAYMENT_DEVICE, remember: false } },
+                ATTEMPT,
+            ],
+        ])('does not sign attempts %s', async (_name, params, attempt) => {
+            const store = initPaymentStore(params);
+
+            const [response] = await store.dispatch(
+                onCoinjoinClientRequest([getSignatureRequest([attempt])]),
+            );
+
+            expect(TrezorConnect.signTransaction).not.toHaveBeenCalled();
+            expect(response).toEqual({
+                type: 'signature',
+                roundId: '01',
+                inputs: [{ outpoint: ANCHOR, error: 'Payment not recorded' }],
+            });
+            expect(getPayment(store)?.attemptTxids).toEqual([]);
+        });
+
+        it('blocks a payment the coordinator refused for its payee or amount', async () => {
+            const store = initPaymentStore();
+            const round: SerializedCoinjoinRound = {
+                id: '01',
+                phase: RoundPhase.OutputRegistration,
+                endRoundState: EndRoundState.None,
+                inputs: [],
+                failed: [],
+                addresses: [],
+                phaseDeadline: 0,
+                roundDeadline: 0,
+                payments: [],
+                rejectedPayments: [
+                    { accountKey: PAYMENT_ACCOUNT.key, paymentId: PAYMENT.id, isBlocked: false },
+                ],
+            };
+
+            await store.dispatch(onCoinjoinRoundChangedThunk({ round }));
+            expect(getPayment(store)).toEqual(PAYMENT);
+
+            await store.dispatch(
+                onCoinjoinRoundChangedThunk({
+                    round: {
+                        ...round,
+                        rejectedPayments: [
+                            {
+                                accountKey: PAYMENT_ACCOUNT.key,
+                                paymentId: PAYMENT.id,
+                                isBlocked: true,
+                            },
+                        ],
+                    },
+                }),
+            );
+            expect(getPayment(store)).toEqual({ ...PAYMENT, isBlocked: true });
+        });
     });
 });

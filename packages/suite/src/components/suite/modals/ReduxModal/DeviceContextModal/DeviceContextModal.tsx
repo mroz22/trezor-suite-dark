@@ -49,6 +49,15 @@ export const DeviceContextModal = ({
         case 'ButtonRequest_FeeOverThreshold':
         case 'ButtonRequest_SignTx': {
             if (data?.type === 'message') return <SignMessageModal device={device} {...data} />;
+            // Suite Dark: the payment screens of a coinjoin authorization, no transaction yet.
+            if (data?.type === 'coinjoin-payment') {
+                return (
+                    <ConfirmActionModal
+                        device={device}
+                        title="TR_COINJOIN_PAYMENT_CONFIRM_ON_DEVICE"
+                    />
+                );
+            }
 
             return <TransactionReviewModal type="sign-transaction" />;
         }

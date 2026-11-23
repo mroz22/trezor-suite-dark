@@ -11,6 +11,8 @@ export const ACCOUNT_DISCOVERY_PROGRESS = '@coinjoin/account-discovery-progress'
 export const ACCOUNT_PRELOADING = '@coinjoin/account-preloading' as const;
 export const ACCOUNT_SET_LIQUIDITY_CLUE = '@coinjoin/account-set-liquidity-clue' as const;
 export const ACCOUNT_ADD_ANONYMITY_LEVEL = '@coinjoin/account-add-anonymity-level' as const;
+// Suite Dark: pay in coinjoin, see docs/features/pay-in-coinjoin.md.
+export const ACCOUNT_SET_PAYMENT = '@coinjoin/account-set-payment' as const;
 
 export const CLIENT_ENABLE = '@coinjoin/client-enable' as const;
 export const CLIENT_DISABLE = '@coinjoin/client-disable' as const;

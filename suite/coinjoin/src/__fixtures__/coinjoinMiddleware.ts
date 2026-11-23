@@ -1,14 +1,21 @@
 import { type RouterState, routerLocationChange } from '@suite/router';
 import { TorStatus, torActions } from '@suite/tor';
+import { testMocks } from '@suite-common/test-utils';
 import { asNetworkSymbol } from '@suite-common/wallet-config';
-import { accountsActions } from '@suite-common/wallet-core';
+import { type TransactionsState, accountsActions } from '@suite-common/wallet-core';
 import { type Account, type SelectedAccountLoaded } from '@suite-common/wallet-types';
 import { mockAccountKey } from '@suite-common/wallet-types/mocks';
+import { getUtxoOutpoint } from '@suite-common/wallet-utils';
 import { type AnonymitySet } from '@trezor/blockchain-link';
 import { DEVICE, type StaticSessionId } from '@trezor/connect';
 
 import * as COINJOIN from '../coinjoinConstants';
-import { type CoinjoinAccount, type CoinjoinSession, type CoinjoinState } from '../coinjoinTypes';
+import {
+    type CoinjoinAccount,
+    type CoinjoinAccountPayment,
+    type CoinjoinSession,
+    type CoinjoinState,
+} from '../coinjoinTypes';
 
 type FixtureDevice = {
     available: boolean;
@@ -19,6 +26,7 @@ type FixtureDevice = {
         staticSessionId: string;
     };
     type: string;
+    features?: { capabilities: string[] };
 };
 
 type FixtureState = Partial<{
@@ -38,6 +46,8 @@ type FixtureState = Partial<{
         accounts: Account[];
         coinjoin: CoinjoinState;
         selectedAccount: SelectedAccountLoaded;
+        // Suite Dark: pay in coinjoin, a fixture may preload the transactions of its payment.
+        transactions?: TransactionsState;
     };
 }>;
 
@@ -159,6 +169,109 @@ const STATE_WITH_INTERRUPTED_SESSION = {
             ],
         },
     },
+};
+
+// Suite Dark: pay in coinjoin, account B has a payment its remembered Firmware Dark device approves.
+// Bytes not all equal, so that a reversed byte order does not match.
+const PAYMENT_ANCHOR = {
+    txid: '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+    vout: 1,
+};
+const PAYMENT_B: CoinjoinAccountPayment = {
+    id: 'payment1',
+    address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
+    amount: 50_000,
+    anchor: getUtxoOutpoint(PAYMENT_ANCHOR),
+    attemptTxids: [],
+};
+const getStateWithInterruptedPayment = (payment: CoinjoinAccountPayment) => ({
+    ...STATE_WITH_INTERRUPTED_SESSION,
+    device: {
+        ...STATE_WITH_INTERRUPTED_SESSION.device,
+        devices: [
+            DEVICE_A,
+            { ...DEVICE_B, features: { capabilities: ['Capability_CoinJoinPayment'] } },
+        ],
+    },
+    wallet: {
+        ...STATE_WITH_INTERRUPTED_SESSION.wallet,
+        accounts: [
+            ACCOUNT_A,
+            {
+                ...ACCOUNT_B,
+                utxo: [
+                    { address: 'address', amount: '300000', confirmations: 1, ...PAYMENT_ANCHOR },
+                ],
+            } as Account,
+        ],
+        coinjoin: {
+            ...STATE_WITH_INTERRUPTED_SESSION.wallet.coinjoin,
+            accounts: STATE_WITH_INTERRUPTED_SESSION.wallet.coinjoin.accounts.map(account =>
+                account.key === ACCOUNT_B_KEY ? { ...account, payment } : account,
+            ),
+        },
+    },
+});
+
+// The anchor was spent by a confirmed round without the payment, which the payment sync has not
+// applied yet; a private coin is left for a new anchor and a non-private one to mix.
+const NEW_ANCHOR_COIN = {
+    address: 'private',
+    amount: '200000',
+    confirmations: 1,
+    txid: '0dac366fd8a67b2a89fbb0d31086e7acded7a5bbf9ef9daa935bc873229ef5b5',
+    vout: 0,
+};
+const getStateWithSpentAnchor = () => {
+    const state = getStateWithInterruptedPayment(PAYMENT_B);
+    const spendingTransaction = testMocks.getWalletTransaction({ blockHeight: 100 });
+
+    return {
+        ...state,
+        wallet: {
+            ...state.wallet,
+            accounts: [
+                ACCOUNT_A,
+                {
+                    ...ACCOUNT_B,
+                    utxo: [
+                        NEW_ANCHOR_COIN,
+                        { ...NEW_ANCHOR_COIN, address: 'address', vout: 1, amount: '300000' },
+                    ],
+                    addresses: { anonymitySet: { address: 1, private: 5 } as AnonymitySet },
+                } as Account,
+            ],
+            transactions: {
+                transactions: {
+                    [ACCOUNT_B_KEY]: [
+                        {
+                            ...spendingTransaction,
+                            details: {
+                                ...spendingTransaction.details,
+                                vin: [{ n: 0, isAddress: true, ...PAYMENT_ANCHOR }],
+                                vout: [{ n: 0, isAddress: true, addresses: ['bc1p'], value: '1' }],
+                            },
+                        },
+                    ],
+                },
+                phishing: {},
+                fetchStatusDetail: {},
+            },
+        },
+    };
+};
+
+// Account B syncs: the restore's own payment sync anchors the payment anew, which is checked in the
+// test, since the new id is random.
+export const spentAnchorFixture = {
+    state: getStateWithSpentAnchor(),
+    action: {
+        type: accountsActions.endCoinjoinAccountSync.type,
+        payload: { accountKey: ACCOUNT_B_KEY, status: 'ready' },
+    },
+    accountKey: ACCOUNT_B_KEY,
+    payment: PAYMENT_B,
+    newAnchor: getUtxoOutpoint(NEW_ANCHOR_COIN),
 };
 
 const PAUSE_ALL_INTERRUPTED_SESSIONS_ACTIONS = [
@@ -376,5 +489,40 @@ export const fixtures: Fixture[] = [
             payload: true,
         },
         expectedActions: [],
+    },
+    {
+        description:
+            'do not restore a session whose payment the device would approve again when Suite goes online',
+        state: getStateWithInterruptedPayment(PAYMENT_B),
+        client: asNetworkSymbol('btc'),
+        connect: [{ success: true }],
+        action: {
+            type: '@suite/online-status',
+            payload: true,
+        },
+        expectedActions: [],
+    },
+    {
+        description:
+            'do not restore a session whose payment the device would approve again when its account syncs',
+        state: getStateWithInterruptedPayment(PAYMENT_B),
+        client: asNetworkSymbol('btc'),
+        connect: [{ success: true }],
+        action: {
+            type: accountsActions.endCoinjoinAccountSync.type,
+            payload: { accountKey: ACCOUNT_B.key, status: 'ready' },
+        },
+        expectedActions: [],
+    },
+    {
+        description: 'restore a session whose payment is paid when Suite goes online',
+        state: getStateWithInterruptedPayment({ ...PAYMENT_B, paidTxid: 'b2'.repeat(32) }),
+        client: asNetworkSymbol('btc'),
+        connect: [{ success: true }],
+        action: {
+            type: '@suite/online-status',
+            payload: true,
+        },
+        expectedActions: RESTORE_SESSION_B_ACTIONS,
     },
 ];
