@@ -22,6 +22,12 @@ const account = {
     },
 };
 
+const setupAccount = {
+    key: 'B',
+    symbol: 'btc',
+    rawLiquidityClue: null,
+};
+
 export const actionFixtures = [
     {
         description: 'chooseCoordinator keeps the coordinator chosen per network',
@@ -65,6 +71,54 @@ export const actionFixtures = [
         result: {
             ...initialState,
             chosenCoordinatorUrls: { btc: 'https://second.example/wabisabi/' },
+        },
+    },
+    {
+        description: 'updateSetupOption starts the custom setup from the recommended values',
+        initialState: {
+            ...initialState,
+            accounts: [setupAccount],
+        },
+        actions: [
+            {
+                type: COINJOIN.ACCOUNT_UPDATE_SETUP_OPTION,
+                payload: { accountKey: setupAccount.key, isRecommended: false },
+            },
+        ],
+        result: {
+            ...initialState,
+            accounts: [
+                {
+                    ...setupAccount,
+                    // FEE_RATE_MEDIAN_FALLBACK without a client times MAX_MINING_FEE_MODIFIER
+                    setup: { maxFeePerVbyte: 5, skipRounds: false, targetAnonymity: 5 },
+                },
+            ],
+        },
+    },
+    {
+        description:
+            'updateSetupOption starts the custom setup from the max mining fee of the config',
+        initialState: {
+            ...initialState,
+            config: { ...initialState.config, maxFeePerVbyte: 42 },
+            accounts: [setupAccount],
+        },
+        actions: [
+            {
+                type: COINJOIN.ACCOUNT_UPDATE_SETUP_OPTION,
+                payload: { accountKey: setupAccount.key, isRecommended: false },
+            },
+        ],
+        result: {
+            ...initialState,
+            config: { ...initialState.config, maxFeePerVbyte: 42 },
+            accounts: [
+                {
+                    ...setupAccount,
+                    setup: { maxFeePerVbyte: 42, skipRounds: false, targetAnonymity: 5 },
+                },
+            ],
         },
     },
     {

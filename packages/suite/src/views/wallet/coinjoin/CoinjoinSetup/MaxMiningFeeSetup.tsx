@@ -32,9 +32,14 @@ const getPercentage = (value: number) => ((value - min) / (max - min)) * 100;
 interface MaxMiningFeeSetupProps {
     accountKey: AccountKey;
     maxMiningFee: number;
+    isDisabled: boolean;
 }
 
-export const MaxMiningFeeSetup = ({ accountKey, maxMiningFee }: MaxMiningFeeSetupProps) => {
+export const MaxMiningFeeSetup = ({
+    accountKey,
+    maxMiningFee,
+    isDisabled,
+}: MaxMiningFeeSetupProps) => {
     const feeRateMedian = useSelector(state => selectFeeRateMedianByAccountKey(state, accountKey));
     const defaultMaxMiningFee = useSelector(state =>
         selectDefaultMaxMiningFeeByAccountKey(state, accountKey),
@@ -66,6 +71,7 @@ export const MaxMiningFeeSetup = ({ accountKey, maxMiningFee }: MaxMiningFeeSetu
             description={<Translation id="TR_MINING_FEE_NOTE" />}
             onChange={updateMaxMiningFee}
             value={maxMiningFee}
+            isDisabled={isDisabled}
             min={min}
             max={max}
             unit={unit}

@@ -1,14 +1,16 @@
-import { AnimatePresence, motion } from 'framer-motion';
 import styled from 'styled-components';
 
 import {
+    DEFAULT_TARGET_ANONYMITY,
+    SKIP_ROUNDS_BY_DEFAULT,
     coinjoinAccountUpdateSetupOption,
     isCoinjoinSupportedSymbol,
     selectCoinjoinAccountByKey,
+    selectDefaultMaxMiningFeeByAccountKey,
 } from '@suite/coinjoin';
 import { Translation } from '@suite/intl';
 import { type AccountKey } from '@suite-common/wallet-types';
-import { Banner, Card, Radio, motionAnimation, motionEasing } from '@trezor/components';
+import { Banner, Card, Radio } from '@trezor/components';
 import { useServices } from '@trezor/dependency-injection';
 import { injectDispatch } from '@trezor/redux-utils';
 
@@ -25,7 +27,7 @@ const SetupOptions = styled.div`
     gap: 12px 40px;
 `;
 
-const CustomSetup = styled.div`
+const SetupSettings = styled.div`
     border-top: 1px solid ${({ theme }) => theme.surfaceBorderRaised};
     display: flex;
     flex-direction: column;
@@ -40,6 +42,9 @@ interface CoinjoinSetupProps {
 
 export const CoinjoinSetup = ({ accountKey }: CoinjoinSetupProps) => {
     const coinjoinAccount = useSelector(state => selectCoinjoinAccountByKey(state, accountKey));
+    const defaultMaxMiningFee = useSelector(state =>
+        selectDefaultMaxMiningFeeByAccountKey(state, accountKey),
+    );
 
     const { dispatch } = useServices(injectDispatch);
 
@@ -47,11 +52,21 @@ export const CoinjoinSetup = ({ accountKey }: CoinjoinSetupProps) => {
         return null;
     }
 
-    const hasSession = !!coinjoinAccount.session;
+    const { setup, session } = coinjoinAccount;
+    const isRecommended = !setup;
+    const hasSession = !!session;
+    // Without a custom setup the settings show, read-only, the values of the running session or
+    // those a new session would use. A session keeps the max mining fee it authorized, while the
+    // default one follows the fee rate median.
+    const settings = setup ?? {
+        targetAnonymity: session?.targetAnonymity ?? DEFAULT_TARGET_ANONYMITY,
+        maxFeePerVbyte: session ? session.maxFeePerKvbyte / 1000 : defaultMaxMiningFee,
+        skipRounds: session ? !!session.skipRounds : SKIP_ROUNDS_BY_DEFAULT,
+    };
 
-    const handleSetupOptionChange = (isRecommended: boolean) => {
-        if (!!coinjoinAccount.setup === isRecommended) {
-            dispatch(coinjoinAccountUpdateSetupOption(accountKey, isRecommended));
+    const handleSetupOptionChange = (isRecommendedChosen: boolean) => {
+        if (isRecommendedChosen !== isRecommended) {
+            dispatch(coinjoinAccountUpdateSetupOption(accountKey, isRecommendedChosen));
         }
     };
     const setRecommendedSetup = () => handleSetupOptionChange(true);
@@ -68,46 +83,37 @@ export const CoinjoinSetup = ({ accountKey }: CoinjoinSetupProps) => {
             )}
             <SetupOptions>
                 <Radio
-                    isChecked={!coinjoinAccount.setup}
+                    isChecked={isRecommended}
                     onChange={setRecommendedSetup}
                     isDisabled={hasSession}
                 >
                     <Translation id="TR_RECOMMENDED" />
                 </Radio>
-                <Radio
-                    isChecked={!!coinjoinAccount.setup}
-                    onChange={setCustomSetup}
-                    isDisabled={hasSession}
-                >
+                <Radio isChecked={!isRecommended} onChange={setCustomSetup} isDisabled={hasSession}>
                     <Translation id="TR_CUSTOM" />
                 </Radio>
             </SetupOptions>
-            <AnimatePresence initial={!coinjoinAccount.setup}>
-                {coinjoinAccount.setup && (
-                    <motion.div
-                        {...motionAnimation.expand}
-                        transition={{ duration: 0.4, ease: motionEasing.transition }}
-                    >
-                        <CustomSetup>
-                            <AnonymityLevelSetup
-                                accountKey={accountKey}
-                                targetAnonymity={coinjoinAccount.setup.targetAnonymity}
-                            />
-                            <MaxMiningFeeSetup
-                                accountKey={accountKey}
-                                maxMiningFee={coinjoinAccount.setup.maxFeePerVbyte}
-                            />
-                            <SkipRoundsSetup
-                                accountKey={accountKey}
-                                skipRounds={coinjoinAccount.setup.skipRounds}
-                            />
-                            {isCoinjoinSupportedSymbol(coinjoinAccount.symbol) && (
-                                <CoordinatorSetup symbol={coinjoinAccount.symbol} />
-                            )}
-                        </CustomSetup>
-                    </motion.div>
+            {/* The sliders keep their own position and last input, so remount them on a switch. */}
+            <SetupSettings key={isRecommended ? 'recommended' : 'custom'}>
+                <AnonymityLevelSetup
+                    accountKey={accountKey}
+                    targetAnonymity={settings.targetAnonymity}
+                    isDisabled={isRecommended}
+                />
+                <MaxMiningFeeSetup
+                    accountKey={accountKey}
+                    maxMiningFee={settings.maxFeePerVbyte}
+                    isDisabled={isRecommended}
+                />
+                <SkipRoundsSetup
+                    accountKey={accountKey}
+                    skipRounds={settings.skipRounds}
+                    isDisabled={isRecommended}
+                />
+                {isCoinjoinSupportedSymbol(coinjoinAccount.symbol) && (
+                    <CoordinatorSetup symbol={coinjoinAccount.symbol} isDisabled={isRecommended} />
                 )}
-            </AnimatePresence>
+            </SetupSettings>
         </Card>
     );
 };
