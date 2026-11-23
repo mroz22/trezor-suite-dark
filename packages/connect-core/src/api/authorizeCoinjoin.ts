@@ -2,6 +2,7 @@ import {
     AuthorizeCoinjoin as AuthorizeCoinjoinSchema,
     type PermissionRequest,
 } from '@trezor/connect-common';
+import { ERRORS } from '@trezor/connect-common/src/constants';
 import type { MessagesSchema as PROTO } from '@trezor/protobuf';
 import { Assert } from '@trezor/schema-utils';
 
@@ -31,6 +32,13 @@ export default class AuthorizeCoinjoin extends AbstractMethod<
             coin_name: coinInfo?.name,
             script_type,
             amount_unit: payload.amountUnit,
+            // Suite Dark: Firmware Dark coinjoin payment
+            payment: payload.payment && {
+                address: payload.payment.address,
+                amount: payload.payment.amount,
+                anchor_prev_hash: payload.payment.anchor.prevHash,
+                anchor_prev_index: payload.payment.anchor.prevIndex,
+            },
         };
 
         super(message, params);
@@ -44,9 +52,19 @@ export default class AuthorizeCoinjoin extends AbstractMethod<
     }
 
     async run() {
-        const cmd = this.getDevice().getCommands();
+        const device = this.getDevice();
+        const cmd = device.getCommands();
 
-        if (this.preauthorized) {
+        if (this.params.payment) {
+            // Suite Dark: firmware without the capability would ignore the payment, authorize
+            // and later refuse to sign the payment round.
+            if (!device.features.capabilities.includes('Capability_CoinJoinPayment')) {
+                throw ERRORS.TypedError(
+                    'Device_MissingCapability',
+                    'Device firmware does not support coinjoin payments.',
+                );
+            }
+        } else if (this.preauthorized) {
             if (await cmd.preauthorize(false)) {
                 // device is already preauthorized
                 return { message: 'Success' };
