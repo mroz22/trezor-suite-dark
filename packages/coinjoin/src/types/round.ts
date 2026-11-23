@@ -6,7 +6,7 @@ import type { AliceShape, SerializedAlice } from './alice';
 import type { CoinjoinRequest, CoinjoinRoundParameters, Round } from './coordinator';
 import type { RawLiquidityClue } from './middleware';
 import type { CoinjoinPrisonShape } from './prison';
-import type { EndRoundState, RoundPhase, SessionPhase } from '../enums';
+import type { EndRoundState, RoundPhase, SessionPhase, WabiSabiProtocolErrorCode } from '../enums';
 
 export type SessionPhaseEvent = {
     phase: SessionPhase;
@@ -23,6 +23,45 @@ export interface CoinjoinRoundOptions {
     logger: Logger;
     setSessionPhase: (event: SessionPhaseEvent) => void;
 }
+
+// Payment output registered by this client, with the payment as it was at registration.
+export type CoinjoinRoundPayment = {
+    accountKey: string;
+    paymentId: string;
+    address: string;
+    scriptPubKey: string;
+    scriptPubKeyHex: string;
+    amount: number;
+    anchor: string;
+};
+
+// Payment output rejected by the coordinator. A rejection of the payee script or the amount blocks
+// the payment: it is not included again in this session, and its anchor stays unspent until the
+// wallet cancels the payment. Other rejections, for example WrongPhase, fail only this round.
+export type CoinjoinRejectedPayment = {
+    accountKey: string;
+    paymentId: string;
+    errorCode?: WabiSabiProtocolErrorCode;
+    isBlocked: boolean;
+};
+
+export type SerializedCoinjoinRoundPayment = Pick<CoinjoinRoundPayment, 'accountKey' | 'paymentId'>;
+
+/**
+ * Signed attempt to make a payment. The payment is made when a transaction that spends `anchor`
+ * confirms with an output paying exactly `amount` to `address`. `txid` identifies this attempt:
+ * witnesses do not change it, because every input of a signed round is P2WPKH or P2TR (own
+ * scripts are compared in verifyRoundInputs, inputs of others need a valid ownership proof).
+ */
+export type CoinjoinPaymentAttempt = {
+    accountKey: string;
+    paymentId: string;
+    address: string;
+    amount: number;
+    anchor: string;
+    txid: string;
+    inputs: string[]; // Outpoints of the inputs of the account in the transaction.
+};
 
 // shape if src/client/CoinjoinRound.ts
 export interface CoinjoinRoundShape {
@@ -51,6 +90,9 @@ export interface CoinjoinRoundShape {
     transactionData?: CoinjoinTransactionData; // transaction to sign
     broadcastedTxDetails?: BroadcastedTransactionDetails; // transaction broadcasted
     liquidityClues?: CoinjoinTransactionLiquidityClue[]; // updated liquidity clues
+    paymentAccountKeys: string[]; // accounts selected to pay in this round
+    payments: CoinjoinRoundPayment[]; // payment outputs registered in this round
+    rejectedPayments: CoinjoinRejectedPayment[]; // payment outputs rejected by the coordinator
 
     setSessionPhase(phase: SessionPhase): void;
     signedSuccessfully(): void;
@@ -73,6 +115,8 @@ export interface SerializedCoinjoinRound {
     phaseDeadline: number; // deadline is inaccurate, phase may change earlier
     roundDeadline: number; // deadline is inaccurate,round may end earlier
     broadcastedTxDetails?: BroadcastedTransactionDetails; // calculated from tx data and witnesses from coordinator
+    payments: SerializedCoinjoinRoundPayment[]; // payment outputs registered in this round
+    rejectedPayments: CoinjoinRejectedPayment[]; // payment outputs rejected by the coordinator
 }
 
 export interface CoinjoinRoundEvent {
@@ -130,6 +174,7 @@ export interface CoinjoinRequestSignatureEvent {
     inputs: SerializedAlice[];
     transaction: CoinjoinTransactionData;
     liquidityClues: CoinjoinTransactionLiquidityClue[];
+    payments: CoinjoinPaymentAttempt[]; // to be stored before the transaction is signed
 }
 
 export type CoinjoinRequestEvent = CoinjoinRequestOwnershipEvent | CoinjoinRequestSignatureEvent;

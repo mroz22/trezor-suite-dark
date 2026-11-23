@@ -1,10 +1,11 @@
 import { type Network } from '@trezor/utxo-lib';
 
 import { type RegisterAccountParams } from '../types';
-import { type AccountAddress, type AccountUtxo } from '../types/account';
+import { type AccountAddress, type AccountPayment, type AccountUtxo } from '../types/account';
 import { type AllowedScriptTypes, type Round } from '../types/coordinator';
 import { type RawLiquidityClue } from '../types/middleware';
 import { getScriptPubKeyFromAddress, prefixScriptPubKey } from '../utils/coordinatorUtils';
+import { getAccountPayment } from '../utils/paymentUtils';
 import { compareOutpoint, getRoundEvents } from '../utils/roundUtils';
 
 const enhanceAccountUtxo = (
@@ -48,6 +49,12 @@ export class Account {
     skipRounds?: [number, number];
     skipRoundCounter = 0;
     rawLiquidityClue: RawLiquidityClue;
+    payment?: AccountPayment; // Undefined if the account has no valid payment.
+    // Payments that must not be made again in this session: their payee or amount was rejected by
+    // the coordinator, or they were already broadcast. The anchor of a blocked payment is held back
+    // until the wallet cancels the payment. The array is shared with copies of the account, never
+    // replace it.
+    readonly blockedPaymentIds: string[] = [];
 
     constructor(account: RegisterAccountParams, network: Network) {
         this.accountKey = account.accountKey;
@@ -65,6 +72,12 @@ export class Account {
         this.maxCoordinatorFeeRate = account.maxCoordinatorFeeRate;
         this.maxRounds = account.maxRounds;
         this.skipRounds = account.skipRounds;
+        this.payment = getAccountPayment({
+            payment: account.payment,
+            network,
+            utxos: this.utxos,
+            changeAddresses: this.changeAddresses,
+        });
     }
 
     // find inputs/outputs already registered in Round(s)
@@ -106,6 +119,12 @@ export class Account {
             account.scriptType,
         );
         this.targetAnonymity = account.targetAnonymity;
+        this.payment = getAccountPayment({
+            payment: account.payment,
+            network: this.network,
+            utxos: this.utxos,
+            changeAddresses: this.changeAddresses,
+        });
     }
 
     updateRawLiquidityClue(value: RawLiquidityClue) {

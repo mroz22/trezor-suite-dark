@@ -3,6 +3,7 @@ import { enumUtils, getWeakRandomNumberInRange } from '@trezor/utils';
 import { EndRoundState, WabiSabiProtocolErrorCode } from '../../enums';
 import type { CoinjoinRoundOptions, CoinjoinRoundShape } from '../../types/round';
 import { getBroadcastedTxDetails } from '../../utils/roundUtils';
+import type { Account } from '../Account';
 
 /**
  * RoundPhase: 4, Ending
@@ -13,8 +14,12 @@ import { getBroadcastedTxDetails } from '../../utils/roundUtils';
  * - catch transaction broadcasted
  */
 
-export const ended = (round: CoinjoinRoundShape, { logger, network }: CoinjoinRoundOptions) => {
-    const { id, endRoundState, inputs, addresses, prison } = round;
+export const ended = (
+    round: CoinjoinRoundShape,
+    accounts: Account[],
+    { logger, network }: CoinjoinRoundOptions,
+) => {
+    const { id, endRoundState, inputs, addresses, payments, prison } = round;
     const endRoundKey = enumUtils.getKeyByValue(EndRoundState, round.endRoundState);
     logger.info(`Ending round ~~${round.id}~~. End state: ${endRoundKey}`);
 
@@ -44,7 +49,7 @@ export const ended = (round: CoinjoinRoundShape, { logger, network }: CoinjoinRo
         if (inputs.some(i => !i.confirmationData)) {
             // no confirmed inputs
             logger.error('Round not signed. Missing confirmed inputs.');
-        } else if (addresses.length === 0) {
+        } else if (addresses.length === 0 && payments.length === 0) {
             // no registered outputs
             logger.error('Round not signed. Missing outputs.');
         } else if (inputs.some(i => !i.witness)) {
@@ -89,6 +94,14 @@ export const ended = (round: CoinjoinRoundShape, { logger, network }: CoinjoinRo
         );
 
         detainTransactionOutputs();
+
+        // The payment was broadcast, it must not be made again with another anchor.
+        payments.forEach(({ accountKey, paymentId }) => {
+            const account = accounts.find(a => a.accountKey === accountKey);
+            if (account && !account.blockedPaymentIds.includes(paymentId)) {
+                account.blockedPaymentIds.push(paymentId);
+            }
+        });
 
         round.broadcastedTxDetails = getBroadcastedTxDetails({
             coinjoinState: round.coinjoinState,

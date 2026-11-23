@@ -97,6 +97,11 @@ export const getOutputSize = (type: AllowedScriptTypes) => {
     throw new Error('Unsupported scriptType');
 };
 
+// NBitcoin FeeRate.GetFee: rounded down, at least 1 sat. WalletWasabi subtracts it from the amount
+// credential of an output (Bob.CalculateOutputAmount) to get the output value.
+export const getMiningFee = (vsize: number, feeRatePerKvbyte: number) =>
+    Math.max(1, Math.floor((vsize * feeRatePerKvbyte) / 1000));
+
 export const getExternalOutputSize = (scriptPubKey: string) => {
     const type = getScriptTypeFromScriptPubKey(scriptPubKey);
 

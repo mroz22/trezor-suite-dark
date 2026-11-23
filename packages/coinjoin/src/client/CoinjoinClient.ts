@@ -94,6 +94,7 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
         this.logger.info(`Register account ~~${account.accountKey}~~`);
 
         const candidate = new Account(account, this.network);
+        this.logInvalidPayment(account, candidate);
         // walk thru all status Rounds and search in for accounts inputs/outputs which are not supposed to be there. (interrupted round)
         // detain them if they are not already detained
         const detained = candidate.findDetainedElements(this.status.rounds);
@@ -128,6 +129,7 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
             this.rounds.forEach(round => round.updateAccount(account));
 
             accountToUpdate.update(account);
+            this.logInvalidPayment(account, accountToUpdate);
 
             // try to trigger registration immediately without waiting for Status change
             this.onStatusUpdate({
@@ -167,6 +169,12 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
 
         // trigger round processing
         this.onStatusUpdate({ rounds, changed });
+    }
+
+    private logInvalidPayment(params: RegisterAccountParams, account: Account) {
+        if (params.payment && !account.payment) {
+            this.logger.warn('Invalid payment ignored');
+        }
     }
 
     private setSessionPhase(event: CoinjoinClientEvents['session-phase']) {

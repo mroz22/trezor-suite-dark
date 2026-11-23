@@ -1,8 +1,18 @@
 import { arrayToDictionary, getWeakRandomId } from '@trezor/utils';
 
 import { SessionPhase } from '../../enums';
+import type { AccountPayment } from '../../types/account';
+import type { AliceShape } from '../../types/alice';
 import type { CoinjoinRoundOptions, CoinjoinRoundShape } from '../../types/round';
-import { getExternalOutputSize } from '../../utils/coordinatorUtils';
+import { getExternalOutputSize, getMiningFee } from '../../utils/coordinatorUtils';
+import {
+    canIncludePayment,
+    getPaymentCost,
+    getPendingPayment,
+    getRemainderLimits,
+    getRemainingAmounts,
+    isScriptInRound,
+} from '../../utils/paymentUtils';
 import { formatRedactedValues } from '../../utils/redacted';
 import { compareOutpoint, getRoundEvents, sumCredentials } from '../../utils/roundUtils';
 import type { Account } from '../Account';
@@ -90,6 +100,110 @@ const decomposeAmounts = async (params: DecomposeAmountsParams): Promise<OutputR
 
 const getOutputAmounts = (params: GetOutputAmountsParams) =>
     decomposeAmounts({ ...params, ...getRoundInputAmounts(params.round, params.accountKey) });
+
+// Error of the v15 middleware AmountDecomposer when the amount is below the smallest denomination
+// of the round (WalletWasabi AmountDecomposer.cs).
+const NOT_ENOUGH_COINS_ERROR = 'Not enough coins registered';
+
+interface GetOutputAmountsWithPaymentParams extends GetOutputAmountsParams {
+    payment: AccountPayment;
+}
+
+// Reserve the payment from the registered amount and decompose the rest into change outputs,
+// as WalletWasabi PaymentAwareOutputProvider does.
+const getOutputAmountsWithPayment = async (
+    params: GetOutputAmountsWithPaymentParams,
+): Promise<OutputRequest[]> => {
+    const { round, accountKey, payment, outputSize, availableVsize } = params;
+    const { roundParameters } = round;
+    const { InternalAmounts, ExternalAmounts } = getRoundInputAmounts(round, accountKey);
+
+    const paymentOutput = {
+        amount: getPaymentCost(payment, roundParameters.MiningFeeRate),
+        vsize: payment.outputSize,
+        payment,
+    };
+    const remainder =
+        InternalAmounts.reduce((sum, amount) => sum + amount, 0) - paymentOutput.amount;
+    if (remainder < 0) {
+        // For example, a funding input failed in connection confirmation.
+        throw new Error('Not enough registered amount for payment');
+    }
+
+    const { maxDust, minChange } = getRemainderLimits(roundParameters, outputSize);
+    if (remainder < minChange) {
+        if (remainder > maxDust) throw new Error('Payment remainder cannot be registered');
+
+        // The remainder is left as a fee, within what the signer accepts.
+        return [paymentOutput];
+    }
+
+    if (availableVsize < outputSize) throw new Error('Not enough vsize for payment change');
+
+    const change = await decomposeAmounts({
+        ...params,
+        InternalAmounts: getRemainingAmounts(InternalAmounts, paymentOutput.amount),
+        ExternalAmounts,
+    }).catch(error => {
+        if (!error.message?.includes(NOT_ENOUGH_COINS_ERROR)) throw error;
+
+        // The remainder cannot be decomposed, register it as one change output.
+        const changeValue = remainder - getMiningFee(outputSize, roundParameters.MiningFeeRate);
+        if (
+            changeValue < roundParameters.AllowedOutputAmounts.Min ||
+            changeValue > roundParameters.AllowedOutputAmounts.Max ||
+            remainder > roundParameters.MaxAmountCredentialValue
+        ) {
+            throw new Error('Payment change cannot be registered');
+        }
+
+        return [{ amount: remainder, vsize: outputSize }];
+    });
+
+    const leftover = remainder - change.reduce((sum, { amount }) => sum + amount, 0);
+    if (leftover < 0 || leftover > maxDust) throw new Error('Unexpected payment change amounts');
+
+    return [paymentOutput, ...change];
+};
+
+type PaymentPlan =
+    { type: 'none' } | { type: 'refuse' } | { type: 'include'; payment: AccountPayment };
+
+const isPrivateInput = (account: Account, input: AliceShape) =>
+    account.utxos.some(
+        utxo =>
+            compareOutpoint(utxo.outpoint, input.outpoint) &&
+            (utxo.anonymityLevel ?? 0) >= account.targetAnonymity,
+    );
+
+const getPaymentPlan = (
+    round: CoinjoinRoundShape,
+    account: Account | undefined,
+    inputs: AliceShape[],
+): PaymentPlan => {
+    const payment = account && getPendingPayment(account);
+    // A payment not selected for this round, or cancelled or blocked since, is not made: the coins
+    // are mixed without it. Neither is a payment without its anchor, a signer would not credit it,
+    // nor a payment that coins below the anonymity target would fund.
+    if (
+        !account ||
+        !payment ||
+        !round.paymentAccountKeys.includes(account.accountKey) ||
+        !inputs.some(input => compareOutpoint(input.outpoint, payment.anchor)) ||
+        !inputs.every(input => isPrivateInput(account, input))
+    ) {
+        return { type: 'none' };
+    }
+
+    if (
+        !canIncludePayment(payment, account.scriptType, round.roundParameters) ||
+        isScriptInRound(round.coinjoinState, payment.scriptPubKeyHex)
+    ) {
+        return { type: 'refuse' };
+    }
+
+    return { type: 'include', payment };
+};
 
 interface CredentialIssuanceParams {
     round: CoinjoinRoundShape;
@@ -295,9 +409,10 @@ export interface Bob {
     vsize: number; // Vsize of the output, also its vsize Credential value.
     amountCredentials: middleware.Credentials[];
     vsizeCredentials: middleware.Credentials[];
+    payment?: AccountPayment; // Set on the payment output only.
 }
 
-type OutputRequest = Pick<Bob, 'amount' | 'vsize'>;
+type OutputRequest = Pick<Bob, 'amount' | 'vsize' | 'payment'>;
 
 interface CreateOutputsCredentials {
     round: CoinjoinRoundShape;
@@ -490,38 +605,43 @@ export const outputDecomposition = async (
             // @ts-expect-error: indexing with noUncheckedIndexedAccess
             const firstInput: (typeof inputs)[number] = inputs[0];
             const { accountKey, inputSize, outputSize } = firstInput; // all inputs belongs to the same account (key, size)
+            const account = accounts.find(a => a.accountKey === accountKey);
             const allVsizeCredentials = inputs.flatMap(i => i.confirmedVsizeCredentials!);
             // limit available vsize if it's bigger than available change addresses
             // prevent from creating amounts which cannot be assigned to address
             // (free ones and those reused in a blame round, see outputRegistration)
             const availableAddresses =
-                accounts
-                    .find(account => account.accountKey === accountKey)
-                    ?.changeAddresses.filter(
-                        ({ address }) =>
-                            !round.prison.isDetained(address) ||
-                            round.prison.isReusableOutput({
-                                address,
-                                accountKey,
-                                roundId: round.blameOf,
-                            }),
-                    ) || [];
+                account?.changeAddresses.filter(
+                    ({ address }) =>
+                        !round.prison.isDetained(address) ||
+                        round.prison.isReusableOutput({
+                            address,
+                            accountKey,
+                            roundId: round.blameOf,
+                        }),
+                ) || [];
             // A failure of one account fails only its inputs, the account is left out of the result.
             const failAccount = (error: Error) =>
                 setAccountError(round, accountKey, error, options);
+            const paymentPlan = getPaymentPlan(round, account, inputs);
+            if (paymentPlan.type === 'refuse') {
+                // The anchor stays unspent, so the payment can be made in a later round.
+                return failAccount(new Error('Payment cannot be made in this round'));
+            }
+
+            const paymentVsize =
+                paymentPlan.type === 'include' ? paymentPlan.payment.outputSize : 0;
             const availableVsize = Math.min(
-                sumCredentials(allVsizeCredentials),
+                sumCredentials(allVsizeCredentials) - paymentVsize,
                 availableAddresses.length * outputSize,
             );
+            const params = { round, accountKey, availableVsize, inputSize, outputSize, options };
 
-            return getOutputAmounts({
-                round,
-                accountKey,
-                availableVsize,
-                inputSize,
-                outputSize,
-                options,
-            }).catch(failAccount);
+            return (
+                paymentPlan.type === 'include'
+                    ? getOutputAmountsWithPayment({ ...params, payment: paymentPlan.payment })
+                    : getOutputAmounts(params)
+            ).catch(failAccount);
         }),
     );
 
