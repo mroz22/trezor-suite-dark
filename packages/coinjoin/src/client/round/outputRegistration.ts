@@ -1,11 +1,11 @@
-import { arrayShuffle, getWeakRandomId, getWeakRandomInt } from '@trezor/utils';
+import { arrayDistinct, arrayShuffle, getWeakRandomId, getWeakRandomInt } from '@trezor/utils';
 
 import { SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
 import type { AccountAddress } from '../../types/account';
 import type { AliceShape } from '../../types/alice';
 import * as coordinator from '../coordinator';
 import * as middleware from '../middleware';
-import { type Bob, outputDecomposition } from './outputDecomposition';
+import { type Bob, outputDecomposition, setAccountError } from './outputDecomposition';
 import { verifyRoundInputs } from './verifyRoundInputs';
 import type { CoinjoinRoundOptions, CoinjoinRoundShape } from '../../types/round';
 import { getOutputSize } from '../../utils/coordinatorUtils';
@@ -179,22 +179,30 @@ export const outputRegistration = async (
 
                 const assignedAddresses: AccountAddress[] = [];
 
+                // A failed registration fails only the inputs of the account.
                 return Promise.all(
                     arrayShuffle(outputs, { randomInt: getWeakRandomInt }).map(output =>
                         registerOutput(round, account, output, assignedAddresses, options),
                     ),
-                );
+                ).catch(error => setAccountError(round, accountKey, error, options));
             }),
         );
 
-        round.setSessionPhase(SessionPhase.AwaitingOthersOutputs);
-        // inform coordinator that each registered input is ready to sign
-        await Promise.all(
-            arrayShuffle(round.inputs, { randomInt: getWeakRandomInt }).map(input =>
-                readyToSign(round, input, options),
-            ),
-        );
-        logger.info(`Ready to sign ~~${round.id}~~`);
+        // Inform the coordinator that each input of the accounts that registered their outputs is
+        // ready to sign.
+        const readyInputs = round.inputs.filter(input => !input.error);
+        if (readyInputs.length > 0) {
+            options.setSessionPhase({
+                phase: SessionPhase.AwaitingOthersOutputs,
+                accountKeys: readyInputs.map(input => input.accountKey).filter(arrayDistinct),
+            });
+            await Promise.all(
+                arrayShuffle(readyInputs, { randomInt: getWeakRandomInt }).map(input =>
+                    readyToSign(round, input, options),
+                ),
+            );
+            logger.info(`Ready to sign ~~${round.id}~~`);
+        }
     } catch (error) {
         // NOTE: if anything goes wrong in this process this Round will be corrupted for all the users
         // registered inputs will probably be banned

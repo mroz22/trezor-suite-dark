@@ -1,5 +1,6 @@
-import { arrayToDictionary, getWeakRandomId, throwError } from '@trezor/utils';
+import { arrayToDictionary, getWeakRandomId } from '@trezor/utils';
 
+import { SessionPhase } from '../../enums';
 import type { CoinjoinRoundOptions, CoinjoinRoundShape } from '../../types/round';
 import { getExternalOutputSize } from '../../utils/coordinatorUtils';
 import { formatRedactedValues } from '../../utils/redacted';
@@ -424,6 +425,26 @@ export interface DecomposedOutputs {
     outputs: Bob[];
 }
 
+// Fail the inputs of one account, for example when the middleware cannot decompose its amounts.
+// The other accounts register their outputs and sign, so their inputs are not banned for it. A lie
+// of the coordinator is not a failure of one account: it is rethrown, so it fails all inputs of the
+// round and stops the client (see outputRegistration and CoinjoinClient).
+export const setAccountError = (
+    round: CoinjoinRoundShape,
+    accountKey: string,
+    error: Error,
+    { logger, setSessionPhase }: CoinjoinRoundOptions,
+) => {
+    if (error instanceof coordinator.CoordinatorMisbehaviorError) throw error;
+
+    logger.error(`Output registration failed: ${error.message}`);
+    const message = `Output registration in ~~${round.id}~~ failed: ${error.message}`;
+    round.inputs.forEach(input => {
+        if (input.accountKey === accountKey) input.setError(new Error(message));
+    });
+    setSessionPhase({ phase: SessionPhase.OutputRegistrationFailed, accountKeys: [accountKey] });
+};
+
 export const outputDecomposition = async (
     round: CoinjoinRoundShape,
     accounts: Account[],
@@ -468,6 +489,9 @@ export const outputDecomposition = async (
                                 roundId: round.blameOf,
                             }),
                     ) || [];
+            // A failure of one account fails only its inputs, the account is left out of the result.
+            const failAccount = (error: Error) =>
+                setAccountError(round, accountKey, error, options);
             const availableVsize = Math.min(
                 sumCredentials(allVsizeCredentials),
                 availableAddresses.length * outputSize,
@@ -480,16 +504,15 @@ export const outputDecomposition = async (
                 inputSize,
                 outputSize,
                 options,
-            });
+            }).catch(failAccount);
         }),
     );
 
     // join inputs Credentials for each account separately
     const joinedCredentials = await Promise.all(
         Object.keys(groupInputsByAccount).map((accountKey, index) => {
-            // @ts-expect-error: indexing with noUncheckedIndexedAccess
-            const amounts: number[] = outputAmounts[index];
-            if (!amounts) throw new Error(`Missing amounts at index ${index}`);
+            const amounts = outputAmounts[index];
+            if (!amounts) return; // The account failed.
 
             logger.info(`Create outputs: ${formatRedactedValues(amounts)}`);
             // @ts-expect-error: indexing with noUncheckedIndexedAccess
@@ -507,16 +530,16 @@ export const outputDecomposition = async (
                 vsizeCredentials,
                 options,
                 result: [],
-            });
+            }).catch(error => setAccountError(round, accountKey, error, options));
 
             return result;
         }),
     );
 
     // combine everything into DecomposedOutputs objects and return the result to outputRegistration
-    return Object.keys(groupInputsByAccount).map((accountKey, index) => ({
-        accountKey,
-        outputs:
-            joinedCredentials[index] || throwError(`Missing joined credentials at index ${index}`),
-    }));
+    return Object.keys(groupInputsByAccount).flatMap((accountKey, index) => {
+        const outputs = joinedCredentials[index];
+
+        return outputs ? { accountKey, outputs } : [];
+    });
 };

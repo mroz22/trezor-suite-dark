@@ -2,7 +2,7 @@ import {
     ACCOUNT,
     outputDecomposition as fixtures,
 } from './__fixtures__/outputDecomposition.fixture';
-import { outputDecomposition } from './outputDecomposition';
+import { outputDecomposition, setAccountError } from './outputDecomposition';
 import { createServer } from '../../../mocks/server';
 import { createInput } from '../../__fixtures__/input.fixture';
 import {
@@ -10,8 +10,10 @@ import {
     createCoinjoinRound,
     createInputAddedEvent,
 } from '../../__fixtures__/round.fixture';
+import { SessionPhase } from '../../enums';
 import { redacted } from '../../utils/redacted';
 import { CoinjoinPrison } from '../CoinjoinPrison';
+import { CoordinatorMisbehaviorError } from '../coordinator';
 
 let server: Awaited<ReturnType<typeof createServer>>;
 
@@ -212,6 +214,101 @@ describe('outputRegistration', () => {
             ownAmounts.forEach(amount => {
                 expect(message).not.toMatch(new RegExp(`\\b${amount}\\b`));
             });
+        });
+    });
+
+    it('outputDecomposition fails only the account whose amounts cannot be decomposed', async () => {
+        server?.addListener('test-request', ({ url, data, resolve, reject }) => {
+            if (url.endsWith('/get-outputs-amounts')) {
+                if (data.InternalAmounts.includes(30000)) {
+                    reject(500, { error: 'ExpectedRuntimeError' });
+                } else {
+                    resolve({ OutputAmounts: [19000] });
+                }
+            }
+            resolve();
+        });
+
+        const createAccountInput = (accountKey: string, outpoint: string, value: number) =>
+            createInput(accountKey, outpoint, {
+                confirmedAmountCredentials: [{ Value: value }, { Value: 0 }],
+                confirmedVsizeCredentials: [{ Value: 197 }, { Value: 0 }],
+            });
+        const inputs = [
+            createAccountInput('account-A', `${'a0'.repeat(32)}00000000`, 30000),
+            createAccountInput('account-B', `${'b0'.repeat(32)}00000000`, 20000),
+        ];
+        const round = createCoinjoinRound(inputs, {
+            ...server?.requestOptions,
+            round: {
+                phase: 3,
+                coinjoinState: {
+                    Type: '',
+                    Events: inputs.map(i => createInputAddedEvent(i.outpoint)),
+                },
+            },
+            roundParameters: { MiningFeeRate: 2000 },
+        });
+        const setSessionPhase = jest.fn();
+
+        const response = await outputDecomposition(
+            round,
+            [ACCOUNT, { ...ACCOUNT, accountKey: 'account-B' }],
+            { ...server?.requestOptions, setSessionPhase },
+        );
+
+        // account-A is left out of the result and only its inputs fail
+        expect(response).toMatchObject([{ accountKey: 'account-B', outputs: [{ amount: 19086 }] }]);
+        expect(round.inputs.map(input => input.error?.message)).toEqual([
+            expect.stringMatching(/failed: .*ExpectedRuntimeError/),
+            undefined,
+        ]);
+        expect(setSessionPhase).toHaveBeenCalledWith({
+            phase: SessionPhase.OutputRegistrationFailed,
+            accountKeys: ['account-A'],
+        });
+    });
+});
+
+describe('setAccountError', () => {
+    const createRound = () =>
+        createCoinjoinRound(
+            [
+                createInput('account-A', `${'a0'.repeat(32)}00000000`),
+                createInput('account-B', `${'b0'.repeat(32)}00000000`),
+            ],
+            { ...server?.requestOptions },
+        );
+
+    it('fails the inputs of the account only', () => {
+        const round = createRound();
+        const setSessionPhase = jest.fn();
+
+        setAccountError(round, 'account-A', new Error('Missing credentials to join'), {
+            ...server?.requestOptions,
+            setSessionPhase,
+        });
+
+        expect(round.inputs.map(input => input.error?.message)).toEqual([
+            expect.stringMatching(/failed: Missing credentials to join/),
+            undefined,
+        ]);
+        expect(setSessionPhase).toHaveBeenCalledWith({
+            phase: SessionPhase.OutputRegistrationFailed,
+            accountKeys: ['account-A'],
+        });
+    });
+
+    it('rethrows a lie of the coordinator, which fails the whole round', () => {
+        const round = createRound();
+        const lie = new CoordinatorMisbehaviorError('Inconsistent data');
+
+        expect(() =>
+            setAccountError(round, 'account-A', lie, { ...server?.requestOptions }),
+        ).toThrow(lie);
+        // outputRegistration fails every input with it
+        round.inputs.forEach(input => {
+            expect(input.error).toBeUndefined();
         });
     });
 });
