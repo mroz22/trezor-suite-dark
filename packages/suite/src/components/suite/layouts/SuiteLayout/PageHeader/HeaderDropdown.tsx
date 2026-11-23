@@ -59,10 +59,10 @@ export const HeaderDropdown = ({ isDisabled, showSignVerify }: HeaderDropdownPro
             },
             title: <Translation id="TR_WALLETCONNECT" />,
             icon: WalletConnectIcon,
-            isHidden: account
-                ? !isWalletConnectSupportedNetwork(account.symbol) ||
-                  !isWalletConnectSupportedAccount(account)
-                : true,
+            isHidden:
+                !account ||
+                !isWalletConnectSupportedNetwork(account.symbol) ||
+                !isWalletConnectSupportedAccount(account),
         },
     ];
 
