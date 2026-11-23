@@ -40,6 +40,7 @@ Commit SHAs change on every rebase, so refer to fork commits by subject, not by 
 | keep the local development profile separate               | `yarn suite:dev:desktop` uses `suitedark-desktop-local` instead of upstream's `@trezor/suite-desktop-local`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | remove user feedback forms                                | Nothing is sent to `data.trezor.io/suite/{feedback,bugs}`. `@suite/feature-feedback` exports a `FeedbackCard` and `FeedbackFormManager` that render nothing and a sidebar-banner selector that returns `false` (Earn, trading and feature ratings, also future upstream cards built on them). The Guide "Help us improve" entries are removed (their strings from `messages.ts` only; locale files keep the keys). The home asset table rating card is not rendered. `sendFeedbackThunk` rejects without a request and shows the send-error toast, so a new upstream form that calls it directly still shows and fails; hide its entry point in this commit. Support and forum links stay.                                                                                                                                                                                                                                                                                                                                                                                                              |
 | hide trading                                              | Buy, Sell, Swap and Concierge are hidden, with their KYC steps. `selectIsRegionRestricted` (`suite/regions/src/regionsSelectors.ts`) always returns true through `IS_TRADING_HIDDEN` in `trading.suite-dark.ts`. Every desktop trading entry point reads it (sidebar Swap, Buy/Sell in page headers, account trade box, token rows, empty states, Earn Buy buttons, Alt+B/C/X), and `TradingRouteGuard` shows "Trading is not available in Suite Dark." (English only) on every `wallet-trading-*` page. The dashboard catalog request stops with it. The Guide drops its Buy, Sell & Swap category, Settings its SLIP-24 toggle. Upstream trading UI tests mock `IS_TRADING_HIDDEN` to `false`.                                                                                                                                                                                                                                                                                                                                                                                                        |
+| pay in coinjoin through Firmware Dark                     | Work in progress, design in `docs/features/pay-in-coinjoin.md`. `@trezor/protobuf` knows `AuthorizeCoinJoin.payment` and `Capability_CoinJoinPayment`, generated from the Firmware Dark protos (an upstream protobuf sync overwrites them). `TrezorConnect.authorizeCoinjoin` takes a `payment` with its anchor; it requires the capability and then never takes the `preauthorized` shortcut. The coinjoin client part is upstream-bound (see Upstream first). Suite state and UI are not done, so nothing offers the payment yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ## Upstream first
 
@@ -96,7 +97,10 @@ builds on the coinjoin commits, so offer it after them, in this order. The read-
 (2026-11-23) build on the coordinator list. The range slider fix (2026-11-24) stands alone: the coinjoin setup
 sliders painted over the sticky account tabs when the page scrolled. The Status fix went upstream alone on
 2026-11-23, on plain `develop` and with only its own test; when upstream merges it, drop the fork commit by hand,
-because its test in the fork sits next to the round id test of an earlier coinjoin commit.
+because its test in the fork sits next to the round id test of an earlier coinjoin commit. The pay in coinjoin commits
+(2026-11-23: two fixes, four refactors and the payment feature) build on the coinjoin commits up to
+`keep change of regular sends off burned coinjoin addresses`, not on the coordinator list; offer them once those are
+in, in this order, and the feature only once it works in the fork.
 
 | Subject                                                                     | Kind     | Upstream PR                                                | Status      |
 | --------------------------------------------------------------------------- | -------- | ---------------------------------------------------------- | ----------- |
@@ -120,6 +124,13 @@ because its test in the fork sits next to the round id test of an earlier coinjo
 | `refactor(coinjoin): read the client settings through one selector`         | refactor | none                                                       | not offered |
 | `feat(coinjoin): choose the coinjoin coordinator from a list`               | feature  | none                                                       | not offered |
 | `feat(coinjoin): show the recommended coinjoin settings read-only`          | feature  | none                                                       | not offered |
+| `fix(coinjoin): redact own amounts in round logs`                           | fix      | none                                                       | not offered |
+| `fix(coinjoin): fail only the failing account in output registration`       | fix      | none                                                       | not offered |
+| `refactor(coinjoin): carry vsize per decomposed output`                     | refactor | none                                                       | not offered |
+| `refactor(coinjoin): build the coinjoin transaction before broadcast`       | refactor | none                                                       | not offered |
+| `refactor(coinjoin): extract input selection and output registration steps` | refactor | none                                                       | not offered |
+| `refactor(coinjoin): calculate input fees in one helper`                    | refactor | none                                                       | not offered |
+| `feat(coinjoin): pay a third party in a coinjoin round`                     | feature  | none                                                       | not offered |
 
 ## Development branches
 
@@ -239,6 +250,8 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   input count below 21) and for refused ownership proofs; any of them on every round means a check refuses kruw.
 - OpenCoordinator was only checked through its status on 2026-11-22 and has not mixed with Suite Dark, and changing
   the coordinator in the Coinjoin setup (`CoinjoinService.replaceClient`) has not run in the desktop app yet.
+- Pay in coinjoin is unfinished: Suite state and UI are missing, so it cannot be used from the app, and the coinjoin
+  client part has run only in unit tests.
 
 ## Working here
 
