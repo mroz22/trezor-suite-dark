@@ -192,13 +192,21 @@ describe(`CoinjoinRound`, () => {
             },
         );
 
-        // process phase (will throw error Missing credentials to join)
+        // process phase (will throw error Missing credentials to join), which fails the inputs of
+        // the account
         await round.process([]);
 
         expect(logger.error).toHaveBeenCalledTimes(1);
         expect(logger.error).toHaveBeenCalledWith(
-            expect.stringMatching(/Output registration failed: \(0\) Missing credentials to join/),
+            expect.stringMatching(/Output registration failed: Missing credentials to join/),
         );
+        expect(round.failed).toEqual([
+            expect.objectContaining({
+                error: expect.objectContaining({
+                    message: expect.stringMatching(/Missing credentials to join/),
+                }),
+            }),
+        ]);
     });
 
     it('end Round if any input-registration errors and there is only one account', async () => {

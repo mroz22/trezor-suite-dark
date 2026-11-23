@@ -9,7 +9,7 @@ import {
     createCoinjoinRound,
     createInputAddedEvent,
 } from '../../__fixtures__/round.fixture';
-import { WabiSabiProtocolErrorCode } from '../../enums';
+import { SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
 import type { AccountAddress } from '../../types/account';
 import type { CoinjoinPrisonInmate } from '../../types/prison';
 import { getScriptPubKeyFromAddress } from '../../utils/coordinatorUtils';
@@ -533,4 +533,99 @@ describe('outputRegistration', () => {
             ]);
         },
     );
+
+    it('a failed output registration fails only the inputs of its account', async () => {
+        const FAILING_ADDRESS = {
+            path: "m/10025'/1'/0'/1'/1/0",
+            address: 'tb1ppll2u0aaprp92gfkntamd476emye7weykcgnctlyj7lduprjx7ys9jn7w3',
+            scriptPubKey: '1 0ffeae3fbd08c25521369afbb6d7dacec99f3b24b6113c2fe497bede04723789',
+        };
+        const OTHER_ACCOUNT_ADDRESS = {
+            path: "m/10025'/1'/1'/1'/1/0",
+            address: 'tb1p4jf9crt5gh57h2spvfht4zwjtnre700uvs4u63l2g2huchrk2dms4lm6kv',
+            scriptPubKey: '1 ac925c0d7445e9ebaa01626eba89d25cc79f3dfc642bcd47ea42afcc5c765377',
+        };
+        const OTHER_ACCOUNT_OUTPOINT =
+            'd00000000000000000000000000000000000000000000000000000000000000004000000';
+        const registrations: string[] = [];
+        const readyToSign: string[] = [];
+        server?.addListener('test-request', ({ url, data, resolve, reject }) => {
+            if (url.endsWith('/output-registration')) {
+                registrations.push(data.Script);
+                if (data.Script === FAILING_ADDRESS.scriptPubKey) {
+                    reject(500, { ErrorCode: 'WrongPhase' });
+                }
+            }
+            if (url.endsWith('/ready-to-sign')) readyToSign.push(data.AliceId);
+            resolve();
+        });
+        const createOutput = (accountKey: string, amount: number) => ({
+            accountKey,
+            amount,
+            amountCredentials: [{ Value: amount }, { Value: 0 }],
+            vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
+        });
+        (outputDecomposition as jest.Mock).mockImplementationOnce(() =>
+            Promise.resolve([
+                { accountKey: 'account-A', outputs: [createOutput('account-A', 100000)] },
+                { accountKey: 'account-B', outputs: [createOutput('account-B', 50000)] },
+            ]),
+        );
+        const setSessionPhase = jest.fn();
+        const options = { ...server?.requestOptions, setSessionPhase };
+        const round = createCoinjoinRound(
+            [
+                createInput('account-A', OWN_OUTPOINT, { registrationData: { AliceId: 'A' } }),
+                createInput('account-B', OTHER_ACCOUNT_OUTPOINT, {
+                    registrationData: { AliceId: 'B' },
+                }),
+            ],
+            {
+                ...options,
+                round: {
+                    phase: 2,
+                    coinjoinState: createCoinjoinState([
+                        OWN_OUTPOINT,
+                        OTHER_ACCOUNT_OUTPOINT,
+                        OTHER_OUTPOINT,
+                    ]),
+                },
+            },
+        );
+
+        const response = await outputRegistration(
+            round,
+            [
+                {
+                    accountKey: 'account-A',
+                    scriptType: 'Taproot',
+                    changeAddresses: [FAILING_ADDRESS],
+                },
+                {
+                    accountKey: 'account-B',
+                    scriptType: 'Taproot',
+                    changeAddresses: [OTHER_ACCOUNT_ADDRESS],
+                },
+            ] as any[], // partial Accounts
+            options,
+        );
+
+        expect(registrations.sort()).toEqual(
+            [FAILING_ADDRESS.scriptPubKey, OTHER_ACCOUNT_ADDRESS.scriptPubKey].sort(),
+        );
+        expect(readyToSign).toEqual(['B']);
+        expect(response.inputs.map(input => input.error?.message)).toEqual([
+            expect.stringMatching(/WrongPhase/),
+            undefined,
+        ]);
+        expect(response.inputs[0]?.error).not.toBeInstanceOf(CoordinatorMisbehaviorError);
+        expect(setSessionPhase).toHaveBeenCalledWith({
+            phase: SessionPhase.OutputRegistrationFailed,
+            accountKeys: ['account-A'],
+        });
+        expect(setSessionPhase).toHaveBeenLastCalledWith({
+            phase: SessionPhase.AwaitingOthersOutputs,
+            accountKeys: ['account-B'],
+        });
+    });
 });
