@@ -416,6 +416,108 @@ describe(`CoinjoinClient`, () => {
         expect(registeredAccounts).toEqual([]);
     });
 
+    it('a round id lie in a round with a payment stops mixing and signs nothing', async () => {
+        const outpoint = `${'a'.repeat(64)}00000000`;
+        // The input is the anchor of the payment, the round was selected to pay it.
+        const payment = {
+            id: 'payment-1',
+            address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+            amount: 100000,
+            anchor: outpoint,
+        };
+        let statusRounds = [DEFAULT_ROUND];
+        const registrationRequested = createDeferred();
+        server?.addListener('test-request', ({ url, resolve }) => {
+            if (url.endsWith('/status')) {
+                resolve({ RoundStates: statusRounds, CoinJoinFeeRateMedians: FEE_RATE_MEDIANS });
+            } else if (url.endsWith('/input-registration')) {
+                // No response, the registration runs until the client leaves the round.
+                registrationRequested.resolve();
+            } else {
+                resolve();
+            }
+        });
+
+        let joinedRound: CoinjoinRound | undefined;
+        const createSpy = jest
+            .spyOn(CoinjoinRound, 'create')
+            .mockImplementation(({ accounts, prison, options }) => {
+                if (joinedRound || accounts.length === 0) return Promise.resolve(undefined);
+
+                joinedRound = createCoinjoinRound(
+                    [createInput('account-A', outpoint, { ownershipProof: '01A1' })],
+                    { ...options, prison, round: { paymentAccountKeys: ['account-A'] } },
+                );
+
+                return Promise.resolve(joinedRound);
+            });
+
+        const cli = new CoinjoinClient(server?.requestOptions);
+        const ended = createDeferred<SerializedCoinjoinRound>();
+        cli.on('round', ({ round }) => {
+            if (round.phase === RoundPhase.Ended) ended.resolve(round);
+        });
+        const sessionPhaseSpy = jest.fn();
+        cli.on('session-phase', sessionPhaseSpy);
+        const requestSpy = jest.fn();
+        cli.on('request', requestSpy);
+
+        await cli.enable();
+        cli.registerAccount({
+            accountKey: 'account-A',
+            scriptType: 'Taproot',
+            utxos: [
+                {
+                    path: "m/10025'/1'/0'/1'/0/0",
+                    outpoint,
+                    address: 'tb1ppxzlcdeawkpyg5q85lepuhsructwkxpgtxt5pcdq3hnfp0v372qq3tfr6s',
+                    amount: 200000,
+                    anonymityLevel: 10,
+                },
+            ],
+            changeAddresses: [],
+            targetAnonymity: 10,
+            rawLiquidityClue: 0,
+            maxFeePerKvbyte: 1,
+            maxCoordinatorFeeRate: 1,
+            maxRounds: 10,
+            payment,
+        });
+        expect(cli.getAccounts()[0]?.payment?.id).toEqual(payment.id);
+        await registrationRequested.promise;
+
+        // Other credential issuer keys under the same id, still in input registration.
+        statusRounds = [
+            {
+                ...DEFAULT_ROUND,
+                AmountCredentialIssuerParameters: DEFAULT_ROUND.VsizeCredentialIssuerParameters,
+            },
+        ];
+
+        const endedRound = await ended.promise;
+        const registeredAccounts = cli.getAccounts();
+        cli.disable();
+        createSpy.mockRestore();
+
+        expect(endedRound).toMatchObject({
+            id: DEFAULT_ROUND.Id,
+            inputs: [],
+            failed: [{ outpoint, error: 'Round parameters do not match the round id' }],
+            payments: [],
+            rejectedPayments: [],
+        });
+        // The lie is not taken for a failure of the payment, the client stops mixing.
+        expect(sessionPhaseSpy).toHaveBeenCalledWith({
+            phase: SessionPhase.CoordinatorMisbehavior,
+            accountKeys: ['account-A'],
+        });
+        expect(registeredAccounts).toEqual([]);
+        // Nothing to sign, the payment is not made and stays pending for the wallet.
+        expect(requestSpy).not.toHaveBeenCalledWith(
+            expect.arrayContaining([expect.objectContaining({ type: 'signature' })]),
+        );
+    });
+
     describe('blame round', () => {
         const OWN_UTXO = {
             path: "m/10025'/1'/0'/1'/0/0",
@@ -821,5 +923,57 @@ describe(`CoinjoinClient`, () => {
             cli.disable();
             createSpy.mockRestore();
         });
+    });
+
+    it('registerAccount and updateAccount ignore an invalid payment', () => {
+        const createSpy = jest.spyOn(CoinjoinRound, 'create').mockResolvedValue(undefined);
+        const payment = {
+            id: 'payment-1',
+            address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+            amount: 123456,
+            anchor: `${'aa'.repeat(32)}0000000`, // one character short
+        };
+        const utxo = {
+            path: "m/10025'/1'/0'/1'/0/0",
+            outpoint: `${'aa'.repeat(32)}00000000`,
+            address: 'tb1ppxzlcdeawkpyg5q85lepuhsructwkxpgtxt5pcdq3hnfp0v372qq3tfr6s',
+            amount: 200000,
+            anonymityLevel: 10,
+        };
+        const account: RegisterAccountParams = {
+            accountKey: 'account-A',
+            scriptType: 'Taproot',
+            utxos: [],
+            changeAddresses: [],
+            targetAnonymity: 10,
+            rawLiquidityClue: 0,
+            maxFeePerKvbyte: 1,
+            maxCoordinatorFeeRate: 1,
+            maxRounds: 10,
+            payment,
+        };
+
+        const cli = new CoinjoinClient(server?.requestOptions);
+        const logs: { level: string; payload: string }[] = [];
+        cli.on('log', log => logs.push(log));
+
+        expect(() => cli.registerAccount(account)).not.toThrow();
+        expect(() => cli.updateAccount({ ...account, utxos: [utxo] })).not.toThrow();
+
+        const [registeredAccount] = cli.getAccounts();
+        expect(registeredAccount?.payment).toBeUndefined();
+        expect(registeredAccount?.utxos).toEqual([expect.objectContaining(utxo)]);
+
+        // Not an error, error logs may be reported off the device.
+        const invalidPaymentLogs = logs.filter(log => /Invalid payment/.test(log.payload));
+        expect(invalidPaymentLogs.map(log => log.level)).toEqual(['warn', 'warn']);
+        invalidPaymentLogs.forEach(({ payload }) => {
+            [account.accountKey, payment.address, `${payment.amount}`, payment.anchor].forEach(
+                value => expect(payload).not.toContain(value),
+            );
+        });
+
+        cli.disable();
+        createSpy.mockRestore();
     });
 });

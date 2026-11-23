@@ -11,10 +11,13 @@ import { type CoinjoinRoundParameters, type Round } from '../types/coordinator';
 import { type CoinjoinPrisonShape } from '../types/prison';
 import {
     type BroadcastedTransactionDetails,
+    type CoinjoinPaymentAttempt,
+    type CoinjoinRejectedPayment,
     type CoinjoinRequestEvent,
     type CoinjoinResponseEvent,
     type CoinjoinRoundEvent,
     type CoinjoinRoundOptions,
+    type CoinjoinRoundPayment,
     type CoinjoinTransactionData,
     type CoinjoinTransactionLiquidityClue,
     type SerializedCoinjoinRound,
@@ -25,9 +28,11 @@ import { inputRegistration } from './round/inputRegistration';
 import { outputRegistration } from './round/outputRegistration';
 import { selectRound } from './round/selectRound';
 import { transactionSigning } from './round/transactionSigning';
+import { getSigningPayments } from '../utils/paymentUtils';
 import { getInputRegistrationEnd, isRoundIdMatching } from '../utils/roundHasher';
 import {
     getCoinjoinRoundDeadlines,
+    getCoinjoinTransaction,
     getCommitmentData,
     getRoundParameters,
 } from '../utils/roundUtils';
@@ -105,6 +110,9 @@ export class CoinjoinRound extends TypedEmitter<Events> {
     transactionData?: CoinjoinTransactionData; // transaction to sign
     broadcastedTxDetails?: BroadcastedTransactionDetails; // transaction broadcasted
     liquidityClues?: CoinjoinTransactionLiquidityClue[]; // updated liquidity clues
+    paymentAccountKeys: string[] = []; // accounts selected to pay in this round
+    payments: CoinjoinRoundPayment[] = []; // payment outputs registered in this round
+    rejectedPayments: CoinjoinRejectedPayment[] = []; // payment outputs rejected by the coordinator
 
     constructor(round: Round, prison: CoinjoinPrisonShape, options: CoinjoinRoundOptions) {
         super();
@@ -307,7 +315,7 @@ export class CoinjoinRound extends TypedEmitter<Events> {
             case RoundPhase.TransactionSigning:
                 return transactionSigning(this, accounts, processOptions);
             case RoundPhase.Ended:
-                return ended(this, processOptions);
+                return ended(this, accounts, processOptions);
             default:
                 return Promise.resolve(this);
         }
@@ -353,9 +361,32 @@ export class CoinjoinRound extends TypedEmitter<Events> {
                     inputs: inputs.map(i => i.toSerialized()),
                     transaction: this.transactionData,
                     liquidityClues: this.liquidityClues,
+                    payments: this.getPaymentAttempts(this.transactionData),
                 };
             }
         }
+    }
+
+    private getPaymentAttempts(transactionData: CoinjoinTransactionData): CoinjoinPaymentAttempt[] {
+        const payments = getSigningPayments(this);
+        if (payments.length === 0) return [];
+
+        const txid = getCoinjoinTransaction({
+            transactionData,
+            network: this.options.network,
+        }).getId();
+
+        return payments.map(({ accountKey, paymentId, address, amount, anchor }) => ({
+            accountKey,
+            paymentId,
+            address,
+            amount,
+            anchor,
+            txid,
+            inputs: this.inputs
+                .filter(input => input.accountKey === accountKey)
+                .map(input => input.outpoint),
+        }));
     }
 
     resolveRequest({ type, inputs }: CoinjoinResponseEvent) {
@@ -454,6 +485,9 @@ export class CoinjoinRound extends TypedEmitter<Events> {
         this.inputs = [];
         this.failed = [];
         this.addresses = [];
+        this.paymentAccountKeys = [];
+        this.payments = [];
+        this.rejectedPayments = [];
         this.removeAllListeners();
     }
 
@@ -470,6 +504,8 @@ export class CoinjoinRound extends TypedEmitter<Events> {
             addresses: this.addresses,
             phaseDeadline: this.phaseDeadline,
             roundDeadline: this.roundDeadline,
+            payments: this.payments.map(({ accountKey, paymentId }) => ({ accountKey, paymentId })),
+            rejectedPayments: this.rejectedPayments.map(payment => ({ ...payment })),
         };
     }
 

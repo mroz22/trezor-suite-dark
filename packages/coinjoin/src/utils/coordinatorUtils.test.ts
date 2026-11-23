@@ -3,6 +3,7 @@ import { networks } from '@trezor/utxo-lib';
 import {
     getAddressFromScriptPubKey,
     getInputFees,
+    getMiningFee,
     getScriptPubKeyFromAddress,
     mergePubkeys,
     prefixScriptPubKey,
@@ -232,5 +233,13 @@ describe('coordinatorUtils', () => {
             { Type: 'OutputAdded', Output: { ScriptPubKey: '01', Value: 3 } },
             { Type: 'OutputAdded', Output: { ScriptPubKey: '02', Value: 1 } },
         ]);
+    });
+
+    it('getMiningFee', () => {
+        expect(getMiningFee(43, 2000)).toEqual(86);
+        expect(getMiningFee(31, 2000)).toEqual(62);
+        expect(getMiningFee(58, 1500)).toEqual(87);
+        expect(getMiningFee(31, 1500)).toEqual(46); // 46.5 rounded down
+        expect(getMiningFee(43, 0)).toEqual(1);
     });
 });

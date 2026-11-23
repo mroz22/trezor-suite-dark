@@ -2,13 +2,15 @@ import type { Logger } from '@trezor/logger';
 import { arrayPartition, arrayToDictionary } from '@trezor/utils';
 
 import {
+    COINJOIN_PAYMENT_MAX_INPUTS,
     ROUND_MIN_OUTPUT_AMOUNT_SANITY,
     ROUND_SELECTION_MAX_OUTPUTS,
     ROUND_SELECTION_REGISTRATION_OFFSET,
 } from '../../constants';
 import { RoundPhase, SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
+import type { AccountPayment, AccountUtxo } from '../../types/account';
 import type { AliceGenerator, AliceShape } from '../../types/alice';
-import type { CoinjoinRoundParameters } from '../../types/coordinator';
+import type { AllowedScriptTypes, CoinjoinRoundParameters } from '../../types/coordinator';
 import type { CoinjoinPrisonShape } from '../../types/prison';
 import type {
     CoinjoinRoundGenerator,
@@ -16,7 +18,16 @@ import type {
     CoinjoinRoundShape,
 } from '../../types/round';
 import { getInputSize, getOutputSize } from '../../utils/coordinatorUtils';
+import {
+    canIncludePayment,
+    getInputEffectiveValue,
+    getPaymentCost,
+    getPendingPayment,
+    getRegisteredScripts,
+    getRemainderLimits,
+} from '../../utils/paymentUtils';
 import { getInputRegistrationEnd, isRoundIdMatching } from '../../utils/roundHasher';
+import { compareOutpoint } from '../../utils/roundUtils';
 import { type Account } from '../Account';
 import { type Round } from '../coordinator';
 import * as middleware from '../middleware';
@@ -381,12 +392,110 @@ export const getAccountCandidates = ({
     return candidates;
 };
 
-interface SelectInputsForRoundProps extends Pick<SelectRoundProps, 'aliceGenerator' | 'options'> {
+interface SelectInputsForRoundProps extends Pick<
+    SelectRoundProps,
+    'aliceGenerator' | 'accounts' | 'options' | 'statusRounds'
+> {
     roundCandidates: CoinjoinRoundShape[];
     accountCandidates: ReturnType<typeof getAccountCandidates>;
 }
 
 type AccountCandidate = SelectInputsForRoundProps['accountCandidates'][number];
+
+const isPaymentInputCandidate = (
+    utxo: AccountUtxo,
+    scriptType: AllowedScriptTypes,
+    roundParameters: CoinjoinRoundParameters,
+) =>
+    utxo.amount >= roundParameters.AllowedInputAmounts.Min &&
+    utxo.amount <= roundParameters.AllowedInputAmounts.Max &&
+    utxo.amount <= roundParameters.MaxSuggestedAmount &&
+    getInputEffectiveValue(utxo.amount, scriptType, roundParameters) > 0;
+
+type PaymentAccount = Pick<
+    AccountCandidate,
+    'utxos' | 'scriptType' | 'targetAnonymity' | 'payment' | 'blockedPaymentIds'
+>;
+
+// Effective value of a coin that may fund the payment of the account: a private coin that can be
+// registered in the round. Undefined for any other coin.
+const getPaymentInputValue = (
+    utxo: AccountUtxo,
+    { scriptType, targetAnonymity }: Pick<PaymentAccount, 'scriptType' | 'targetAnonymity'>,
+    roundParameters: CoinjoinRoundParameters,
+) => {
+    const isPrivate = (utxo.anonymityLevel ?? 0) >= targetAnonymity;
+    if (!isPrivate || !isPaymentInputCandidate(utxo, scriptType, roundParameters)) return;
+
+    return getInputEffectiveValue(utxo.amount, scriptType, roundParameters);
+};
+
+// What remains after the payment is either small enough to be left as a fee accepted by the signer
+// or large enough for a change output.
+const getPaymentFunding = (
+    payment: AccountPayment,
+    scriptType: AllowedScriptTypes,
+    roundParameters: CoinjoinRoundParameters,
+) => {
+    const cost = getPaymentCost(payment, roundParameters.MiningFeeRate);
+    const { maxDust, minChange } = getRemainderLimits(roundParameters, getOutputSize(scriptType));
+    const isFunded = (sum: number) => {
+        const remainder = sum - cost;
+
+        return remainder >= 0 && (remainder <= maxDust || remainder >= minChange);
+    };
+
+    return { cost, minChange, isFunded };
+};
+
+// Select private coins funding the pending payment of the account, always including its anchor,
+// as WalletWasabi PrivatePaymentCoinSelector does (see getPaymentFunding).
+// Returns indexes of account utxos, or an empty list if the payment cannot be funded in this round.
+export const selectInputsForPayment = (
+    account: PaymentAccount,
+    roundParameters: CoinjoinRoundParameters,
+) => {
+    const payment = getPendingPayment(account);
+    if (!payment) return [];
+
+    const { cost, minChange, isFunded } = getPaymentFunding(
+        payment,
+        account.scriptType,
+        roundParameters,
+    );
+
+    const candidates = account.utxos.flatMap((utxo, index) => {
+        const value = getPaymentInputValue(utxo, account, roundParameters);
+
+        return value === undefined ? [] : { index, outpoint: utxo.outpoint, value };
+    });
+
+    const anchor = candidates.find(({ outpoint }) => compareOutpoint(outpoint, payment.anchor));
+    if (!anchor) return [];
+
+    const selection = [anchor];
+    let sum = anchor.value;
+    let available = candidates
+        .filter(candidate => candidate !== anchor)
+        .toSorted((a, b) => a.value - b.value);
+    while (
+        !isFunded(sum) &&
+        selection.length < COINJOIN_PAYMENT_MAX_INPUTS &&
+        available.length > 0
+    ) {
+        // Cover the payment first, then a remainder too large to leave as a fee and too small for
+        // a change output.
+        const target = sum < cost ? cost : cost + minChange;
+        const next = available.find(({ value }) => value >= target - sum) ?? available.at(-1);
+        if (!next) break;
+
+        selection.push(next);
+        sum += next.value;
+        available = available.filter(candidate => candidate !== next);
+    }
+
+    return isFunded(sum) ? selection.map(({ index }) => index) : [];
+};
 
 type SelectInputsWithMiddlewareParams = Pick<SelectInputsForRoundProps, 'options'> & {
     account: AccountCandidate;
@@ -401,12 +510,34 @@ const selectInputsWithMiddleware = ({
     options,
 }: SelectInputsWithMiddlewareParams) => {
     const { logger } = options;
-    const Utxos = account.utxos.map(utxo => ({
+    const anchor = account.payment?.anchor;
+    const isAnchor = (utxo: AccountUtxo) => !!anchor && compareOutpoint(utxo.outpoint, anchor);
+
+    // The anchor is only spent in a round carrying its payment, or after the payment was
+    // cancelled, so that earlier signed attempts of the payment cannot confirm any more.
+    const middlewareUtxos = account.utxos.flatMap((utxo, index) =>
+        isAnchor(utxo) ? [] : { utxo, index },
+    );
+    const Utxos = middlewareUtxos.map(({ utxo }) => ({
         Outpoint: utxo.outpoint,
         Amount: utxo.amount,
         ScriptPubKey: utxo.scriptPubKey,
         AnonymitySet: utxo.anonymityLevel as number,
     }));
+
+    const addCancelledPaymentAnchor = (indices: number[]) => {
+        if (!account.payment?.isCancelled) return indices;
+
+        const anchorIndex = account.utxos.findIndex(
+            utxo =>
+                isAnchor(utxo) &&
+                isPaymentInputCandidate(utxo, account.scriptType, roundParameters),
+        );
+
+        return anchorIndex < 0 || indices.includes(anchorIndex)
+            ? indices
+            : [...indices, anchorIndex];
+    };
 
     // get liquidityClue and try to select the best utxos combination for given Round
     return middleware
@@ -433,23 +564,75 @@ const selectInputsWithMiddleware = ({
                 },
             ),
         )
-        .then(indices => indices.filter(i => Utxos[i])) // filter valid existing indices
+        .then(indices => indices.flatMap(i => middlewareUtxos[i]?.index ?? [])) // filter valid existing indices
         .catch(error => {
             logger.error(`selectInputsForRound failed ${error.message}`);
 
             return [] as number[];
-        });
+        })
+        .then(addCancelledPaymentAnchor);
 };
+
+type AccountSelection = {
+    indices: number[]; // Indexes of account utxos.
+    isPayment: boolean; // Selected by selectInputsForPayment to fund the payment of the account.
+};
+
+// Payment that the blame round repeats: the account re-registers its anchor, and the re-registered
+// coins fund it as selectInputsForPayment requires. The failed round may have mixed the anchor
+// without the payment, for example with coins below the anonymity target before the payment was
+// made, and such coins must not fund it.
+const getBlameRoundPayment = (
+    account: AccountCandidate,
+    utxos: AccountUtxo[],
+    roundParameters: CoinjoinRoundParameters,
+) => {
+    const payment = getPendingPayment(account);
+    if (
+        !payment ||
+        !canIncludePayment(payment, account.scriptType, roundParameters) ||
+        !utxos.some(utxo => compareOutpoint(utxo.outpoint, payment.anchor))
+    ) {
+        return;
+    }
+
+    const values = utxos.flatMap(
+        utxo => getPaymentInputValue(utxo, account, roundParameters) ?? [],
+    );
+    if (values.length < utxos.length) return;
+
+    const sum = values.reduce((total, value) => total + value, 0);
+    const { isFunded } = getPaymentFunding(payment, account.scriptType, roundParameters);
+
+    return isFunded(sum) ? payment : undefined;
+};
+
+// Payee scripts of the accounts already selected to pay in the round, which other accounts may
+// join while it is in input registration (see getRoundCandidates). The coordinator merges outputs
+// with the same script, so one payee script is paid at most once in a round. Any payment of such
+// an account counts, also a cancelled or blocked one, as in checkPayments.
+const getRoundPaymentScripts = (
+    { paymentAccountKeys }: CoinjoinRoundShape,
+    accounts: SelectRoundProps['accounts'],
+) =>
+    new Set(
+        accounts.flatMap(({ accountKey, payment }) =>
+            payment && paymentAccountKeys.includes(accountKey) ? payment.scriptPubKeyHex : [],
+        ),
+    );
 
 const selectInputsForBlameRound = ({
     aliceGenerator,
     roundCandidates,
     accountCandidates,
+    accounts,
     options: { logger },
-}: SelectInputsForRoundProps) =>
+}: Omit<SelectInputsForRoundProps, 'statusRounds'>) =>
     roundCandidates.find(round => {
         const inputs: AliceShape[] = [];
         let isRefusedByAccount = false;
+        const paymentAccountKeys: string[] = [];
+        const paymentScripts = getRoundPaymentScripts(round, accounts);
         accountCandidates.forEach(account => {
             const utxos = account.blameOf ? account.blameOf[round.blameOf] : null;
             if (utxos && utxos.length > 0) {
@@ -467,6 +650,13 @@ const selectInputsForBlameRound = ({
                         aliceGenerator(account.accountKey, account.scriptType, utxo),
                     ),
                 );
+
+                // The coins are re-registered without the payment unless they may fund it.
+                const payment = getBlameRoundPayment(account, utxos, round.roundParameters);
+                if (payment && !paymentScripts.has(payment.scriptPubKeyHex)) {
+                    paymentScripts.add(payment.scriptPubKeyHex);
+                    paymentAccountKeys.push(account.accountKey);
+                }
             }
         });
 
@@ -487,6 +677,7 @@ const selectInputsForBlameRound = ({
 
             round.blameOfOutpoints = blameOfOutpoints;
             round.inputs.push(...inputs);
+            round.paymentAccountKeys.push(...paymentAccountKeys);
             logger.info(`Created blame round ~~${round.id}~~ with ${round.inputs.length} inputs`);
 
             return true;
@@ -506,6 +697,8 @@ export const selectInputsForRound = async ({
     aliceGenerator,
     roundCandidates,
     accountCandidates,
+    accounts,
+    statusRounds,
     options,
 }: SelectInputsForRoundProps) => {
     // NOTE: regular Round.blameOf field is 64 length string filled with 0
@@ -524,6 +717,7 @@ export const selectInputsForRound = async ({
             aliceGenerator,
             roundCandidates: blameOfRounds,
             accountCandidates: blameOfAccounts,
+            accounts,
             options,
         });
 
@@ -532,46 +726,85 @@ export const selectInputsForRound = async ({
 
     const { logger } = options;
 
-    // utxoSelection shape: array_of_rounds[ array_of_accounts[ array_of_useful_account_utxo_indexes[] ] ]
-    // example for 2 roundCandidates with 3 accountCandidates: [ [ [], [], [0, 1, 2] ], [ [3], [], [0, 1, 2] ] ]
+    // The coordinator rejects a payment output whose script is registered in any round.
+    const registeredScripts = normalAccounts.some(account => getPendingPayment(account))
+        ? getRegisteredScripts(statusRounds)
+        : new Set<string>();
+
+    // utxoSelection shape: array_of_rounds[ array_of_accounts[ AccountSelection ] ]
+    // indices for 2 roundCandidates with 3 accountCandidates: [ [ [], [], [0, 1, 2] ], [ [3], [], [0, 1, 2] ] ]
     // each account/utxo set needs to be calculated separately because of different targetAnonymity
     const utxoSelection = await Promise.all(
         // for each CoinjoinRound...
         normalRounds.map(round => {
             const { roundParameters } = round;
+            // Payments are selected before the first await below, in the order of accounts, so the
+            // first account paying a script funds it in this round.
+            const paymentScripts = getRoundPaymentScripts(round, accounts);
 
             return Promise.all(
                 // ...and for each Account
-                normalAccounts.map(account => {
-                    if (isRoundFeeAboveAccountLimit({ round, account, logger })) return [];
+                normalAccounts.map(async (account): Promise<AccountSelection> => {
+                    if (isRoundFeeAboveAccountLimit({ round, account, logger })) {
+                        return { indices: [], isPayment: false };
+                    }
 
-                    return selectInputsWithMiddleware({ account, roundParameters, options });
+                    const payment = getPendingPayment(account);
+                    if (
+                        payment &&
+                        canIncludePayment(payment, account.scriptType, roundParameters) &&
+                        !registeredScripts.has(payment.scriptPubKeyHex) &&
+                        !paymentScripts.has(payment.scriptPubKeyHex)
+                    ) {
+                        const indices = selectInputsForPayment(account, roundParameters);
+                        if (indices.length > 0) {
+                            paymentScripts.add(payment.scriptPubKeyHex);
+
+                            return { indices, isPayment: true };
+                        }
+                    }
+
+                    const indices = await selectInputsWithMiddleware({
+                        account,
+                        roundParameters,
+                        options,
+                    });
+
+                    return { indices, isPayment: false };
                 }),
             );
         }),
     );
 
-    // find Round with maximum possible utxos
-    const sumUtxosInRounds = utxoSelection.map(acc => acc.reduce((a, b) => a + b.length, 0));
-    const maxUtxosInRound = Math.max(...sumUtxosInRounds);
-    if (maxUtxosInRound < 1) {
+    // find Round funding most payments, then with maximum possible utxos
+    const roundScores = utxoSelection.map(selection => ({
+        paymentCount: selection.filter(({ isPayment }) => isPayment).length,
+        utxoCount: selection.reduce((sum, { indices }) => sum + indices.length, 0),
+    }));
+    const bestScore = roundScores.reduce(
+        (best, score) =>
+            score.paymentCount > best.paymentCount ||
+            (score.paymentCount === best.paymentCount && score.utxoCount > best.utxoCount)
+                ? score
+                : best,
+        { paymentCount: 0, utxoCount: 0 },
+    );
+    if (bestScore.utxoCount < 1) {
         logger.info('No results from selectInputsForRound');
 
         return;
     }
 
-    // get index of Round with maximum possible utxos
-    const roundIndex = sumUtxosInRounds.findIndex(count => count === maxUtxosInRound);
+    // get index of Round with the best score
+    const roundIndex = roundScores.indexOf(bestScore);
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
     const selectedRound: (typeof normalRounds)[number] = normalRounds[roundIndex];
 
     // setup new Round
     accountCandidates.forEach((account, accountIndex) => {
         // find utxos assigned to this Round and Account
-        // @ts-expect-error: indexing with noUncheckedIndexedAccess
-        const roundSelection: (typeof utxoSelection)[number] = utxoSelection[roundIndex];
-        // @ts-expect-error: indexing with noUncheckedIndexedAccess
-        const utxoIndexes: (typeof roundSelection)[number] = roundSelection[accountIndex];
+        const accountSelection = utxoSelection[roundIndex]?.[accountIndex];
+        const utxoIndexes = accountSelection?.indices ?? [];
         const selectedUtxos = utxoIndexes.map(utxoIndex => {
             const { utxos } = account;
             // @ts-expect-error: indexing with noUncheckedIndexedAccess
@@ -607,6 +840,13 @@ export const selectInputsForRound = async ({
                     aliceGenerator(account.accountKey, account.scriptType, utxo),
                 ),
             );
+
+            if (accountSelection?.isPayment && account.payment) {
+                selectedRound.paymentAccountKeys.push(account.accountKey);
+                logger.info(
+                    `Payment ~~${account.payment.id}~~ funded by ${selectedUtxos.length} inputs in ~~${selectedRound.id}~~`,
+                );
+            }
         }
     });
 
@@ -664,6 +904,8 @@ export const selectRound = async ({
         aliceGenerator,
         roundCandidates,
         accountCandidates,
+        accounts,
+        statusRounds,
         options,
     });
     if (!newRound) {

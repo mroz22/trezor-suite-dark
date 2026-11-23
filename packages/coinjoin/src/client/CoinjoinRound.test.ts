@@ -1,5 +1,6 @@
 import { loggerMock } from '@trezor/logger/mocks';
 import * as trezorUtils from '@trezor/utils';
+import { networks } from '@trezor/utxo-lib';
 
 import { CoordinatorMisbehaviorError } from './coordinator';
 import { createServer } from '../../mocks/server';
@@ -12,6 +13,8 @@ import {
 } from '../__fixtures__/round.fixture';
 import * as CONSTANTS from '../constants';
 import { EndRoundState, RoundPhase, WabiSabiProtocolErrorCode } from '../enums';
+import type { CoinjoinRoundPayment, CoinjoinTransactionData } from '../types/round';
+import { getCoinjoinTransaction } from '../utils/roundUtils';
 
 // mock random delay function
 jest.mock('@trezor/utils', () => {
@@ -506,5 +509,132 @@ describe(`CoinjoinRound`, () => {
 
         delayMock.mockRestore();
         constantsMock.mockRestore();
+    });
+
+    describe('payments', () => {
+        const PAYMENT: CoinjoinRoundPayment = {
+            accountKey: 'account-A',
+            paymentId: 'payment-1',
+            address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
+            scriptPubKey: '0 751e76e8199196d454941c45d1b3a323f1433bd6',
+            scriptPubKeyHex: '0014751e76e8199196d454941c45d1b3a323f1433bd6',
+            amount: 100000,
+            anchor: `${'a0'.repeat(32)}00000000`,
+        };
+        const txInput = {
+            path: undefined,
+            amount: 150000,
+            commitmentData: '',
+            address: '',
+            scriptPubKey: '',
+            ownershipProof: '',
+        };
+        const TRANSACTION_DATA: CoinjoinTransactionData = {
+            inputs: [
+                { ...txInput, outpoint: PAYMENT.anchor, hash: 'a0'.repeat(32), index: 0 },
+                {
+                    ...txInput,
+                    outpoint: `${'b0'.repeat(32)}00000000`,
+                    hash: 'b0'.repeat(32),
+                    index: 0,
+                },
+            ],
+            outputs: [
+                { address: PAYMENT.address, scriptPubKey: PAYMENT.scriptPubKeyHex, amount: 100000 },
+                { address: '', scriptPubKey: `0014${'cd'.repeat(20)}`, amount: 199000 },
+            ],
+            coinjoinRequest: { fee_rate: 0, no_fee_threshold: 0, min_registrable_amount: 5000 },
+        };
+
+        const signingRound = (payments: CoinjoinRoundPayment[]) =>
+            createCoinjoinRound(
+                [
+                    createInput('account-A', PAYMENT.anchor),
+                    createInput('account-B', `${'b0'.repeat(32)}00000000`),
+                ],
+                {
+                    ...server?.requestOptions,
+                    network: networks.bitcoin,
+                    round: {
+                        phase: 3,
+                        transactionData: TRANSACTION_DATA,
+                        liquidityClues: [],
+                        payments,
+                    },
+                },
+            );
+
+        it('getRequest returns the payment attempts with the signature request', () => {
+            const request = signingRound([PAYMENT]).getRequest();
+
+            expect(request).toMatchObject({
+                type: 'signature',
+                payments: [
+                    {
+                        accountKey: 'account-A',
+                        paymentId: PAYMENT.paymentId,
+                        address: PAYMENT.address,
+                        amount: PAYMENT.amount,
+                        anchor: PAYMENT.anchor,
+                        txid: getCoinjoinTransaction({
+                            transactionData: TRANSACTION_DATA,
+                            network: networks.bitcoin,
+                        }).getId(),
+                        inputs: [PAYMENT.anchor],
+                    },
+                ],
+            });
+
+            expect(signingRound([]).getRequest()).toMatchObject({ payments: [] });
+        });
+
+        it('getRequest leaves out the payment of an account whose inputs failed', () => {
+            // account-A registered its payment, but a change output of account-A failed and its
+            // inputs left the round.
+            const round = signingRound([PAYMENT]);
+            round.inputs = round.inputs.filter(input => input.accountKey !== 'account-A');
+
+            expect(round.getRequest()).toMatchObject({ type: 'signature', payments: [] });
+        });
+
+        it('toSerialized exposes payment ids only and end resets payments', () => {
+            const round = createCoinjoinRound([], {
+                ...server?.requestOptions,
+                round: {
+                    paymentAccountKeys: ['account-A'],
+                    payments: [PAYMENT],
+                    rejectedPayments: [
+                        {
+                            accountKey: 'account-B',
+                            paymentId: 'payment-2',
+                            errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+                            isBlocked: true,
+                        },
+                    ],
+                },
+            });
+
+            expect(round.toSerialized()).toMatchObject({
+                payments: [{ accountKey: 'account-A', paymentId: PAYMENT.paymentId }],
+                rejectedPayments: [
+                    {
+                        accountKey: 'account-B',
+                        paymentId: 'payment-2',
+                        errorCode: WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+                        isBlocked: true,
+                    },
+                ],
+            });
+            expect(round.toSerialized().payments[0]).toEqual({
+                accountKey: 'account-A',
+                paymentId: PAYMENT.paymentId,
+            });
+
+            round.end();
+
+            expect(round.paymentAccountKeys).toEqual([]);
+            expect(round.payments).toEqual([]);
+            expect(round.rejectedPayments).toEqual([]);
+        });
     });
 });
