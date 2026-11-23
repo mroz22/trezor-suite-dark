@@ -92,13 +92,15 @@ plain `develop` together with the coinjoin commits listed above it, so offer the
 trading catalog fix (2026-11-21) stops the Tokens tab and the asset detail header from loading the trading catalog
 from `exchange.trezor.io` where `selectIsRegionRestricted` hides trading, as the dashboard already does; Suite Dark
 needs it for "hide trading". The coordinator list (2026-11-21: the Status fix, the selector refactor and the feature)
-builds on the coinjoin commits, so offer it after them, in this order.
+builds on the coinjoin commits, so offer it after them, in this order. The Status fix went upstream alone on
+2026-11-23, on plain `develop` and with only its own test; when upstream merges it, drop the fork commit by hand,
+because its test in the fork sits next to the round id test of an earlier coinjoin commit.
 
 | Subject                                                                     | Kind     | Upstream PR                                                | Status      |
 | --------------------------------------------------------------------------- | -------- | ---------------------------------------------------------- | ----------- |
-| `fix(walletconnect): match Ethereum session chains by chain ID`             | fix      | [35337](https://github.com/trezor/trezor-suite/pull/35337) | draft       |
-| `fix(walletconnect): keep coinjoin accounts out of WalletConnect sessions`  | fix      | [35337](https://github.com/trezor/trezor-suite/pull/35337) | draft       |
-| `fix(suite): hide the WalletConnect menu item on coinjoin accounts`         | fix      | [35337](https://github.com/trezor/trezor-suite/pull/35337) | draft       |
+| `fix(walletconnect): match Ethereum session chains by chain ID`             | fix      | [35337](https://github.com/trezor/trezor-suite/pull/35337) | open        |
+| `fix(walletconnect): keep coinjoin accounts out of WalletConnect sessions`  | fix      | [35337](https://github.com/trezor/trezor-suite/pull/35337) | open        |
+| `fix(suite): hide the WalletConnect menu item on coinjoin accounts`         | fix      | [35337](https://github.com/trezor/trezor-suite/pull/35337) | open        |
 | `fix(coinjoin): cap the authorized coordinator fee at 0.1%`                 | fix      | none                                                       | not offered |
 | `fix(coinjoin): skip rounds and refuse coinjoins with too few inputs`       | fix      | none                                                       | not offered |
 | `fix(coinjoin): apply fee and parameter limits to blame rounds`             | fix      | none                                                       | not offered |
@@ -111,7 +113,7 @@ builds on the coinjoin commits, so offer it after them, in this order.
 | `fix(coinjoin): never reuse output scripts after a failed round`            | fix      | none                                                       | not offered |
 | `fix(coinjoin): keep change of regular sends off burned coinjoin addresses` | fix      | none                                                       | not offered |
 | `fix(suite): skip the trading catalog request in restricted regions`        | fix      | none                                                       | not offered |
-| `fix(coinjoin): end rounds that disappear from the status`                  | fix      | none                                                       | not offered |
+| `fix(coinjoin): end rounds that disappear from the status`                  | fix      | [35387](https://github.com/trezor/trezor-suite/pull/35387) | open        |
 | `refactor(coinjoin): read the client settings through one selector`         | refactor | none                                                       | not offered |
 | `feat(coinjoin): choose the coinjoin coordinator from a list`               | feature  | none                                                       | not offered |
 
