@@ -59,9 +59,14 @@ const getPosition = (value: number) => minPosition + (Math.log(value) - minValue
 interface AnonymityLevelSetupProps {
     accountKey: string;
     targetAnonymity: number;
+    isDisabled: boolean;
 }
 
-export const AnonymityLevelSetup = ({ accountKey, targetAnonymity }: AnonymityLevelSetupProps) => {
+export const AnonymityLevelSetup = ({
+    accountKey,
+    targetAnonymity,
+    isDisabled,
+}: AnonymityLevelSetupProps) => {
     const [sliderPosition, setSliderPosition] = useState(getPosition(targetAnonymity));
 
     const { dispatch } = useServices(injectDispatch);
@@ -145,6 +150,7 @@ export const AnonymityLevelSetup = ({ accountKey, targetAnonymity }: AnonymityLe
             description={<Translation id="TR_COINJOIN_ANONYMITY_LEVEL_SETUP_DESCRIPTION" />}
             onChange={updateAnonymity}
             value={targetAnonymity}
+            isDisabled={isDisabled}
             sliderValue={sliderPosition}
             min={1}
             max={100}

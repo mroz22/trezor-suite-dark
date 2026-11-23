@@ -18,9 +18,10 @@ const Row = styled.div`
 interface SkipRoundsSetupProps {
     accountKey: string;
     skipRounds: boolean;
+    isDisabled: boolean;
 }
 
-export const SkipRoundsSetup = ({ accountKey, skipRounds }: SkipRoundsSetupProps) => {
+export const SkipRoundsSetup = ({ accountKey, skipRounds, isDisabled }: SkipRoundsSetupProps) => {
     const session = useSelector(selectCurrentCoinjoinSession);
 
     const { dispatch } = useServices(injectDispatch);
@@ -33,7 +34,11 @@ export const SkipRoundsSetup = ({ accountKey, skipRounds }: SkipRoundsSetupProps
                 <Translation id="TR_SKIP_ROUNDS" />
             </H3>
             <Row>
-                <Switch isChecked={skipRounds} isDisabled={!!session} onChange={toggleSkipRounds} />
+                <Switch
+                    isChecked={skipRounds}
+                    isDisabled={isDisabled || !!session}
+                    onChange={toggleSkipRounds}
+                />
                 <div>
                     <Text as="div" typographyStyle="body-md" margin={{ bottom: 4 }}>
                         <Translation id="TR_SKIP_ROUNDS_HEADING" />

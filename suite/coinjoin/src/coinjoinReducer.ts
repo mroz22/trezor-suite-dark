@@ -103,9 +103,11 @@ const updateSetupOption = (
     } else {
         const client = draft.clients[account.symbol];
         const feeRateMedian = client?.feeRateMedian || FEE_RATE_MEDIAN_FALLBACK;
-        const { maxMiningFeeModifier } = draft.config;
+        const { maxMiningFeeModifier, maxFeePerVbyte } = draft.config;
+        // Start from the recommended values, see selectDefaultMaxMiningFeeByAccountKey.
         account.setup = {
-            maxFeePerVbyte: getMaxFeePerVbyte(feeRateMedian, maxMiningFeeModifier),
+            maxFeePerVbyte:
+                maxFeePerVbyte ?? getMaxFeePerVbyte(feeRateMedian, maxMiningFeeModifier),
             skipRounds: SKIP_ROUNDS_BY_DEFAULT,
             targetAnonymity: DEFAULT_TARGET_ANONYMITY,
         };
