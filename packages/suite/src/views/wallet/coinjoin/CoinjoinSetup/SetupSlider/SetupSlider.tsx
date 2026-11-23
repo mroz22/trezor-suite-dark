@@ -31,6 +31,7 @@ export const SetupSlider = ({
     description,
     heading,
     inputWidth,
+    isDisabled,
     labels,
     max,
     min,
@@ -42,6 +43,7 @@ export const SetupSlider = ({
     value,
 }: SetupSliderProps) => {
     const session = useSelector(selectCurrentCoinjoinSession);
+    const isLocked = isDisabled || !!session;
 
     const inputRef = useRef<{ setPreviousValue: (number: number) => void }>(null);
 
@@ -79,7 +81,7 @@ export const SetupSlider = ({
                     ref={inputRef}
                     value={inputValue}
                     onChange={onChange}
-                    isDisabled={!!session}
+                    isDisabled={isLocked}
                     min={min}
                     max={max}
                     unit={unit}
@@ -103,7 +105,7 @@ export const SetupSlider = ({
                 labels={labels}
                 onLabelClick={handleChange}
                 onKeyDown={modifyPosition && handleKeyDown}
-                disabled={!!session}
+                disabled={isLocked}
             />
             {children}
         </div>

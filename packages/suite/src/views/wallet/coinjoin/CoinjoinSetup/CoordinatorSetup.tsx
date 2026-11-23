@@ -25,9 +25,10 @@ const getCoordinatorLabel = (coordinatorUrl: string) => coordinatorUrl.replace(/
 
 type CoordinatorSetupProps = {
     symbol: CoinjoinSymbol;
+    isDisabled: boolean;
 };
 
-export const CoordinatorSetup = ({ symbol }: CoordinatorSetupProps) => {
+export const CoordinatorSetup = ({ symbol, isDisabled }: CoordinatorSetupProps) => {
     const coordinators = useSelector(state => selectCoinjoinCoordinatorsBySymbol(state, symbol));
     const isOverridden = useSelector(state =>
         selectIsCoinjoinCoordinatorOverriddenBySymbol(state, symbol),
@@ -75,7 +76,7 @@ export const CoordinatorSetup = ({ symbol }: CoordinatorSetupProps) => {
                     options={options}
                     value={selectedOption}
                     onChange={handleChange}
-                    isDisabled={hasSession || clientStatus === 'loading'}
+                    isDisabled={isDisabled || hasSession || clientStatus === 'loading'}
                     isClearable={false}
                     isSearchable={false}
                     data-testid="@coinjoin/coordinator-select"
