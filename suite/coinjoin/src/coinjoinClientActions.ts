@@ -67,7 +67,7 @@ export const clientDisable = createAction(COINJOIN.CLIENT_DISABLE, (symbol: Acco
     payload: { symbol },
 }));
 
-const clientEnableSuccess = createAction(
+export const clientEnableSuccess = createAction(
     COINJOIN.CLIENT_ENABLE_SUCCESS,
     (
         symbol: Account['symbol'],
@@ -75,7 +75,7 @@ const clientEnableSuccess = createAction(
     ) => ({ payload: { symbol, status, version } }),
 );
 
-const clientEnableFailed = createAction(
+export const clientEnableFailed = createAction(
     COINJOIN.CLIENT_ENABLE_FAILED,
     (symbol: Account['symbol']) => ({ payload: { symbol } }),
 );
