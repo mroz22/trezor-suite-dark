@@ -270,7 +270,6 @@ export { TradingTransactionsList } from './src/views/wallet/trading/common/Tradi
 export { WalletLayout } from './src/components/wallet/WalletLayout/WalletLayout';
 export { WalletSubpageHeading } from './src/components/wallet/WalletLayout/WalletSubpageHeading';
 export { CoinjoinConfirmation } from './src/views/wallet/anonymize/components/CoinjoinConfirmation';
-export { CoinjoinAccountDiscoveryProgress } from './src/components/wallet/CoinjoinAccountDiscoveryProgress/CoinjoinAccountDiscoveryProgress';
 export { CoinjoinExplanation } from './src/views/wallet/coinjoin/CoinjoinExplanation/CoinjoinExplanation';
 export { CoinjoinSetup } from './src/views/wallet/coinjoin/CoinjoinSetup/CoinjoinSetup';
 export { CoinjoinSummary } from './src/views/wallet/coinjoin/CoinjoinSummary/CoinjoinSummary';

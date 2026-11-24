@@ -4,7 +4,6 @@ import { selectFullSelectedAccount } from '@suite/account';
 import { Translation } from '@suite/intl';
 import { Column } from '@trezor/components';
 import {
-    CoinjoinAccountDiscoveryProgress,
     CoinjoinExplanation,
     CoinjoinSetup,
     CoinjoinSummary,
@@ -28,24 +27,16 @@ export const WalletCoinjoinPage = () => {
         return <WalletLayout title="TR_ACCOUNT_TYPE_COINJOIN" account={selectedAccount} />;
     }
 
-    const isSyncing = account.status === 'out-of-sync' && !!account.syncing;
-
     return (
         <WalletLayout title="TR_ACCOUNT_TYPE_COINJOIN" account={selectedAccount}>
-            {isSyncing ? (
-                <CoinjoinAccountDiscoveryProgress />
-            ) : (
-                <>
-                    <CoinjoinSummary accountKey={account.key} />
-                    <CoinjoinExplanation />
-                    <Column gap={8}>
-                        <Heading>
-                            <Translation id="TR_COINJOIN_SETUP_HEADING" />
-                        </Heading>
-                        <CoinjoinSetup accountKey={account.key} />
-                    </Column>
-                </>
-            )}
+            <CoinjoinSummary accountKey={account.key} />
+            <CoinjoinExplanation />
+            <Column gap={8}>
+                <Heading>
+                    <Translation id="TR_COINJOIN_SETUP_HEADING" />
+                </Heading>
+                <CoinjoinSetup accountKey={account.key} />
+            </Column>
         </WalletLayout>
     );
 };

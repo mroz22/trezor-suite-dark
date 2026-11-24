@@ -11,7 +11,6 @@ import {
     AccountEmpty,
     AccountOverviewBalance,
     CardanoNewProviderCard,
-    CoinjoinAccountDiscoveryProgress,
     NoTransactions,
     SingleAccountTransactionList,
     SolanaLimitedHistoryBanner,
@@ -52,16 +51,7 @@ export const TransactionsPage = () => {
     const isGraphSupported = isNetworkWithGraphFeature(account.symbol, account.backendType);
 
     if (account.backendType === 'coinjoin') {
-        const isLoading = account.status === 'out-of-sync' && !!account.syncing;
         const isEmpty = !accountTransactions.length;
-
-        if (isLoading) {
-            return (
-                <Layout selectedAccount={selectedAccount}>
-                    <CoinjoinAccountDiscoveryProgress />
-                </Layout>
-            );
-        }
 
         // The whole mixing surface lives in the Coinjoin tab, so the Privacy account overview is a
         // plain balance and history. Trading is unavailable for the account type, so neither the TradeBox nor the
