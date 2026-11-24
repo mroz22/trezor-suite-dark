@@ -2,7 +2,7 @@ import { combineReducers, createReducer } from '@reduxjs/toolkit';
 
 import { type SelectedAccountRootState, selectedAccountReducer } from '@suite/account';
 import { type LocksRootState, locksReducer } from '@suite/locks';
-import { type RouterRootState, routerReducer } from '@suite/router';
+import { type RouterRootState, routerLocationChange, routerReducer } from '@suite/router';
 import { type TorRootState, torReducer } from '@suite/tor';
 import {
     type MessageSystemRootState,
@@ -130,5 +130,19 @@ describe('coinjoinMiddleware', () => {
             store.dispatch(f.action);
             expect(await store.getActions()).toEqual([f.action, ...f.expectedActions]);
         });
+    });
+
+    it('keeps scanning Privacy accounts when the user leaves the wallet', async () => {
+        const store = initStore();
+        const { backend } = await CoinjoinService.createInstance({
+            symbol: asNetworkSymbol('btc'),
+        });
+
+        store.dispatch({
+            type: routerLocationChange.type,
+            payload: { app: 'dashboard', route: { name: 'suite-index' } },
+        });
+
+        expect(backend.cancel).not.toHaveBeenCalled();
     });
 });

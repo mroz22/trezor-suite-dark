@@ -45,7 +45,6 @@ import {
     selectIsAccountWithSessionInCriticalPhaseByAccountKey,
     selectIsAnySessionInCriticalPhase,
 } from './coinjoinSelectors';
-import { CoinjoinService } from './coinjoinService';
 import { isCoinjoinSupportedSymbol } from './coinjoinUtils';
 
 type CoinjoinMiddlewareState = AccountsRootState &
@@ -63,11 +62,6 @@ export const coinjoinMiddleware =
     (api: MiddlewareAPI<Dispatch, CoinjoinMiddlewareState>) =>
     (next: ReduxDispatch) =>
     (action: UnknownAction): UnknownAction => {
-        // cancel discovery for each CoinjoinBackend
-        if (routerLocationChange.match(action) && action.payload.app !== 'wallet') {
-            CoinjoinService.getInstances().forEach(({ backend }) => backend.cancel());
-        }
-
         // do not close success and critical phase modals when they are open, similar to discovery middleware
         const { modal } = api.getState();
         const allowedModals = ['coinjoin-success', 'more-rounds-needed', 'critical-coinjoin-phase'];
