@@ -3,19 +3,28 @@ import { combineReducers, createReducer } from '@reduxjs/toolkit';
 import { type SelectedAccountRootState, selectedAccountReducer } from '@suite/account';
 import { type LocksRootState, locksReducer } from '@suite/locks';
 import { type RouterRootState, routerLocationChange, routerReducer } from '@suite/router';
-import { type TorRootState, torReducer } from '@suite/tor';
+import { type TorRootState, TorStatus, torReducer } from '@suite/tor';
 import {
     type MessageSystemRootState,
     prepareMessageSystemReducer,
 } from '@suite-common/message-system';
 import { createTestCompositionRoot, testMocks } from '@suite-common/test-utils';
 import { asNetworkSymbol } from '@suite-common/wallet-config';
-import { type AccountsRootState, prepareAccountsReducer } from '@suite-common/wallet-core';
+import {
+    type AccountsRootState,
+    type TransactionsState,
+    prepareAccountsReducer,
+    transactionsInitialState,
+} from '@suite-common/wallet-core';
 import { mockSetAccountAddMetadata } from '@suite-common/wallet-core/mocks';
+import { type Account } from '@suite-common/wallet-types';
+import { mockWalletAccount } from '@suite-common/wallet-types/mocks';
 import '@suite-common/test-utils/globalOverrides';
 import { mockActionType, mockReducer } from '@trezor/redux-utils/mocks';
 
 import { fixtures } from './__fixtures__/coinjoinMiddleware';
+import { rescanCoinjoinAccountThunk } from './coinjoinAccountActions';
+import { clientEnableFailed, clientEnableSuccess } from './coinjoinClientActions';
 import { coinjoinMiddleware } from './coinjoinMiddleware';
 import { coinjoinReducer } from './coinjoinReducer';
 import { type CoinjoinRootState, type SuiteOnlineRootState } from './coinjoinSelectors';
@@ -47,6 +56,7 @@ const rootReducer = combineReducers({
         }),
         coinjoin: coinjoinReducer,
         selectedAccount: selectedAccountReducer,
+        transactions: () => transactionsInitialState,
     }),
 });
 
@@ -60,9 +70,13 @@ type State = AccountsRootState &
     TorRootState & {
         device: Record<never, never>;
         discreetMode: { isActive: boolean };
+        wallet: { transactions: TransactionsState };
     };
 
-const initStore = ({ device, router, suite, tor, wallet }: Partial<State> = {}) => {
+// The wallet is merged into the initial one, so a test passes only the slices it needs.
+type InitStoreParams = Partial<Omit<State, 'wallet'>> & { wallet?: Partial<State['wallet']> };
+
+const initStore = ({ device, router, suite, tor, wallet }: InitStoreParams = {}) => {
     const preloadedState: State = rootReducer(undefined, { type: 'init' });
 
     if (device) {
@@ -144,5 +158,61 @@ describe('coinjoinMiddleware', () => {
         });
 
         expect(backend.cancel).not.toHaveBeenCalled();
+    });
+
+    // A scan requested while the client loads is skipped, so the next one would otherwise wait for
+    // the next blockchain sync.
+    describe('scans Privacy accounts once their coinjoin client has loaded', () => {
+        const symbol = asNetworkSymbol('btc');
+        const account: Account = {
+            ...mockWalletAccount({ symbol, accountType: 'coinjoin' }),
+            backendType: 'coinjoin',
+            status: 'out-of-sync',
+        };
+
+        const initStoreWithAccount = async () => {
+            const store = initStore({
+                tor: { torStatus: TorStatus.Enabled, torBootstrap: null },
+                wallet: { accounts: [account] },
+            });
+            const { backend } = await CoinjoinService.createInstance({ symbol });
+            // The scans stay running, the tests need only their start.
+            jest.mocked(backend.scanAccount).mockImplementation(() => new Promise<never>(() => {}));
+
+            return { store, backend };
+        };
+
+        it.each([
+            [
+                'enabled',
+                clientEnableSuccess(symbol, {
+                    rounds: [],
+                    changed: [],
+                    feeRateMedian: 0,
+                    coordinationFeeRate: { rate: 0, plebsDontPayThreshold: 0 },
+                    allowedInputAmounts: { min: 5000, max: 134375000000 },
+                    version: { majorVersion: '2', commitHash: '', legalDocumentsVersion: '' },
+                }),
+            ],
+            ['failed to enable', clientEnableFailed(symbol)],
+        ])('when the client %s', async (_, action) => {
+            const { store, backend } = await initStoreWithAccount();
+
+            store.dispatch(action);
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            expect(backend.scanAccount).toHaveBeenCalledWith(
+                expect.objectContaining({ descriptor: account.descriptor }),
+            );
+        });
+
+        it('once when its rescan loads the client', async () => {
+            const { store, backend } = await initStoreWithAccount();
+
+            store.dispatch(rescanCoinjoinAccountThunk(account.key, true));
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            expect(backend.scanAccount).toHaveBeenCalledTimes(1);
+        });
     });
 });
