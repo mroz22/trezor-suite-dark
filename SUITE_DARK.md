@@ -71,10 +71,23 @@ therefore split by where they are going:
 
 Upstream pull requests of the upstream-bound commits on `main`. Their state is read live with
 `gh pr view <n> --repo trezor/trezor-suite`; a sync drops a merged commit together with its line. Suite Dark
-needs the trading catalog fix for "hide trading".
+needs the trading catalog fix for "hide trading". The coinjoin commits (2026-11-21, defences of the client against a
+malicious coordinator) are a stack: each applies to plain `develop` together with the coinjoin commits listed above
+it, so offer them upstream in this order.
 
 - `fix(suite): skip the trading catalog request in restricted regions`: not offered
 - `fix(suite): run the 26.12.0.1 storage migration on databases at 26.12.0`: not offered
+- `fix(coinjoin): cap the authorized coordinator fee at 0.1%`: not offered
+- `fix(coinjoin): skip rounds and refuse coinjoins with too few inputs`: not offered
+- `fix(coinjoin): apply fee and parameter limits to blame rounds`: not offered
+- `fix(coinjoin): verify own inputs and outputs before signing`: not offered
+- `refactor(utxo-lib): export BIP340 Schnorr signature verification`: not offered
+- `fix(coinjoin): verify other participants' ownership proofs`: not offered
+- `fix(coinjoin): check blame round inputs against the failed round`: not offered
+- `fix(coinjoin): verify round id against round parameters`: not offered
+- `fix(coinjoin): stop mixing when the coordinator lies`: not offered
+- `fix(coinjoin): never reuse output scripts after a failed round`: not offered
+- `fix(coinjoin): keep change of regular sends off burned coinjoin addresses`: not offered
 
 ## Development branches
 
@@ -140,7 +153,13 @@ Ask the owner before reversing any of these.
   its transaction id, and removing that breaks voting. The website lists this traffic; keep both in sync.
 - Kept on purpose: the backend User-Agent `Trezor Suite <version>` (blends in with Trezor Suite users) and the
   SatoshiLabs copyright and author. `process.env.VERSION` has no suffix, because it is sent in the backend User-Agent.
-- Coinjoin: upstream Privacy accounts as they are, plus the kruw.io default coordinator (tested by the owner).
+- Coinjoin: upstream Privacy accounts plus the kruw.io default coordinator (tested by the owner), with the
+  client-side defences against a malicious coordinator listed under Upstream first (2026-11-21): a coordinator fee
+  cap of 0.1 % for any coordinator, at least 21 inputs on mainnet (2 on test networks), no solo coinjoins, checks of
+  the round id, of the ownership proofs and inputs of other participants, of own inputs and outputs and of blame
+  rounds, output scripts never reused after a failed round except in its blame rounds, outputs only on change
+  addresses up to the last used one plus 20 (the discovery lookout of 50 stays), and mixing stops with an error
+  message when the coordinator provably lies. Coordinators older than WalletWasabi 2.3.0 lose their blame rounds.
 - Password manager: upstream's Dropbox-based experimental feature, only renamed. Upstream does not save the
   experimental toggle (`packages/suite/src/actions/suite/storageActions.ts`), so it is off after every restart.
 - Minimal diff: prefer a default, flag or render site over editing many upstream lines; put fork-only values in
@@ -163,6 +182,9 @@ Do not start these without the owner. "Content first, then the update and releas
 - Features of the old fork, each a separate decision: password manager on Suite Sync (with a Dropbox import and a
   relay choice), verified contacts, installing Firmware Dark from Settings, the password-autofill browser extension.
   Dropped: WARD, NIP-17 chat, linky, satellites, connection requests, AuthLabel, appSecrets.
+- Further coinjoin defences (2026-11-20): a spot check of other participants' inputs against Blockbook (new metadata
+  for SatoshiLabs, little gain), polling the coordinator status under its own Tor identity with `RoundCheckpoints`,
+  and a mining fee cap that does not come from the coordinator's data.
 
 ## Known gaps
 
@@ -187,6 +209,9 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   mention buying or swapping (Activate assets modal, network reserve, staking hints, the bundled release notes).
 - The Earn yield API types (`suite-common/earn-stablecoin-defs`) carry KYC fields that nothing reads yet; an upstream
   Earn KYC step would need hiding.
+- The coinjoin defences are covered by unit tests only and have not run against kruw yet. In the first session,
+  watch the coinjoin log for skipped rounds (`Skipping round`, a round id that does not match its parameters, a min
+  input count below 21) and for refused ownership proofs; any of them on every round means a check refuses kruw.
 
 ## Working here
 
