@@ -1,5 +1,6 @@
 import {
     AuthorizeCoinjoin as AuthorizeCoinjoinSchema,
+    type DeviceButtonRequestCode,
     type PermissionRequest,
 } from '@trezor/connect-common';
 import { ERRORS } from '@trezor/connect-common/src/constants';
@@ -49,6 +50,14 @@ export default class AuthorizeCoinjoin extends AbstractMethod<
 
     get requiredPermissions(): PermissionRequest[] {
         return [this.coinPerm('internal', this.requiredFirmwareCoins[0])];
+    }
+
+    // Suite Dark: Firmware Dark shows the payment's address and amount like an output to confirm,
+    // so that the wallet can tell them from a transaction review.
+    getButtonRequestData(code: DeviceButtonRequestCode) {
+        if (this.params.payment && code === 'ButtonRequest_ConfirmOutput') {
+            return { type: 'coinjoin-payment' as const };
+        }
     }
 
     async run() {

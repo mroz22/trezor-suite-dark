@@ -10,16 +10,31 @@ import { type TrezorDevice } from '@suite-common/suite-types';
 import { mockSuiteDevice } from '@suite-common/suite-types/mocks';
 import { createTestCompositionRoot, initPreloadedState, testMocks } from '@suite-common/test-utils';
 import { asNetworkSymbol } from '@suite-common/wallet-config';
-import { type AccountsState, prepareAccountsReducer } from '@suite-common/wallet-core';
+import {
+    type AccountsState,
+    type TransactionsState,
+    type WalletSettingsState,
+    initialWalletSettingsState,
+    prepareAccountsReducer,
+    prepareWalletSettingsReducer,
+    transactionsInitialState,
+} from '@suite-common/wallet-core';
 import { mockSetAccountAddMetadata } from '@suite-common/wallet-core/mocks';
 import { mockActionType, mockReducer } from '@trezor/redux-utils/mocks';
 
 import * as fixtures from './__fixtures__/coinjoinAccountActions';
+import {
+    ANCHOR,
+    PAYMENT,
+    ACCOUNT as PAYMENT_ACCOUNT,
+    PAYMENT_DEVICE,
+    SESSION as PAYMENT_SESSION,
+} from './__fixtures__/coinjoinPayment';
 import * as coinjoinAccountActions from './coinjoinAccountActions';
 import * as coinjoinClientActions from './coinjoinClientActions';
-import { coinjoinReducer } from './coinjoinReducer';
+import { initialState as coinjoinInitialState, coinjoinReducer } from './coinjoinReducer';
 import { CoinjoinService } from './coinjoinService';
-import { type CoinjoinState } from './coinjoinTypes';
+import { type CoinjoinAccountPayment, type CoinjoinState } from './coinjoinTypes';
 
 jest.mock('./coinjoinService', () => {
     const mock = jest.requireActual('./__fixtures__/mockCoinjoinService');
@@ -66,7 +81,11 @@ const rootReducer = combineReducers({
         }),
         selectedAccount: selectedAccountReducer,
         blockchain: () => ({ btc: { blockHeight: 150 } }),
-        transactions: () => ({ transactions: {} }),
+        transactions: () => transactionsInitialState,
+        settings: prepareWalletSettingsReducer({
+            actionTypes: { storageLoad: mockActionType('storageLoad') },
+            reducers: { storageLoadWalletSettings: mockReducer() },
+        }),
     }),
 });
 
@@ -87,19 +106,20 @@ type State = {
         accounts: AccountsState;
         selectedAccount: SelectedAccountState;
         blockchain: { btc: { blockHeight: number } };
-        transactions: { transactions: Record<never, never> };
+        transactions: TransactionsState;
+        settings: WalletSettingsState;
     };
 };
 type Wallet = Partial<State['wallet']> & { devices?: State['device']['devices'] };
 
-const initStore = ({ accounts, coinjoin, devices }: Wallet = {}) =>
+const initStore = ({ accounts, coinjoin, devices, settings }: Wallet = {}) =>
     createTestCompositionRoot<void, State>({
         reducer: rootReducer,
         preloadedState: initPreloadedState({
             rootReducer,
             partialState: {
                 ...(devices !== undefined ? { device: { devices } } : {}),
-                wallet: { accounts, coinjoin },
+                wallet: { accounts, coinjoin, settings },
             },
         }),
     }).services.store;
@@ -231,6 +251,135 @@ describe('coinjoinAccountActions', () => {
             expect(authorizeCoinjoin).toHaveBeenCalledWith(
                 expect.objectContaining({ maxCoordinatorFeeRate: f.authorizedFeeRate }),
             );
+        });
+    });
+
+    // Suite Dark: pay in coinjoin.
+    describe('authorizes a pending payment with its anchor', () => {
+        const { authorizeCoinjoin } = testMocks.getTrezorConnectMock();
+        const btc = asNetworkSymbol('btc');
+        const CONNECT_PAYMENT = {
+            address: PAYMENT.address,
+            amount: PAYMENT.amount,
+            anchor: { prevHash: 'a1'.repeat(32), prevIndex: 1 },
+        };
+        const CLIENT_PAYMENT = {
+            id: PAYMENT.id,
+            address: PAYMENT.address,
+            amount: PAYMENT.amount,
+            anchor: ANCHOR,
+        };
+
+        type InitPaymentStoreParams = {
+            payment?: CoinjoinAccountPayment;
+            device?: TrezorDevice;
+            isAutoEjectEnabled?: boolean;
+            isPaused?: boolean;
+        };
+
+        const initPaymentStore = ({
+            payment = PAYMENT,
+            device = PAYMENT_DEVICE,
+            isAutoEjectEnabled = false,
+            isPaused = false,
+        }: InitPaymentStoreParams = {}) => {
+            testMocks.setTrezorConnectFixtures({
+                success: true,
+                payload: { message: 'Authorized' },
+            });
+
+            return initStore({
+                accounts: [PAYMENT_ACCOUNT],
+                coinjoin: {
+                    ...coinjoinInitialState,
+                    accounts: [
+                        {
+                            key: PAYMENT_ACCOUNT.key,
+                            symbol: btc,
+                            rawLiquidityClue: null,
+                            payment,
+                            session: isPaused ? { ...PAYMENT_SESSION, paused: true } : undefined,
+                        },
+                    ],
+                },
+                devices: [device],
+                settings: { ...initialWalletSettingsState, isAutoEjectEnabled },
+            });
+        };
+        const getRegisteredAccount = () =>
+            jest.mocked(CoinjoinService.getInstance(btc)?.client.registerAccount)?.mock
+                .calls[0]?.[0];
+        const getSession = (store: ReturnType<typeof initStore>) =>
+            store.getState().wallet.coinjoin.accounts[0]?.session;
+
+        it('startCoinjoinSession', async () => {
+            const store = initPaymentStore();
+
+            await store.dispatch(
+                coinjoinAccountActions.startCoinjoinSessionThunk(PAYMENT_ACCOUNT, PAYMENT_SESSION),
+            );
+
+            expect(authorizeCoinjoin).toHaveBeenCalledWith(
+                expect.objectContaining({ payment: CONNECT_PAYMENT }),
+            );
+            expect(getSession(store)?.authorizedPaymentId).toBe(PAYMENT.id);
+            expect(getRegisteredAccount()).toMatchObject({ payment: CLIENT_PAYMENT });
+        });
+
+        it('restoreCoinjoinSession', async () => {
+            const store = initPaymentStore({ isPaused: true });
+            await CoinjoinService.createInstance({ symbol: btc });
+
+            await store.dispatch(
+                coinjoinAccountActions.restoreCoinjoinSessionThunk(PAYMENT_ACCOUNT.key),
+            );
+
+            expect(authorizeCoinjoin).toHaveBeenCalledWith(
+                expect.objectContaining({ preauthorized: true, payment: CONNECT_PAYMENT }),
+            );
+            expect(getSession(store)?.authorizedPaymentId).toBe(PAYMENT.id);
+            expect(getRegisteredAccount()).toMatchObject({ payment: CLIENT_PAYMENT });
+        });
+
+        it.each<[string, InitPaymentStoreParams]>([
+            [
+                'on a wallet that is not remembered',
+                { device: { ...PAYMENT_DEVICE, remember: false } },
+            ],
+            ['with auto-eject on', { isAutoEjectEnabled: true }],
+            [
+                'without the capability',
+                {
+                    device: mockSuiteDevice(
+                        { state: PAYMENT_DEVICE.state, remember: true, connected: true },
+                        { capabilities: ['Capability_Bitcoin'] },
+                    ),
+                },
+            ],
+        ])('authorizes no payment %s and holds back its anchor', async (_name, params) => {
+            const store = initPaymentStore(params);
+
+            await store.dispatch(
+                coinjoinAccountActions.startCoinjoinSessionThunk(PAYMENT_ACCOUNT, PAYMENT_SESSION),
+            );
+
+            expect(authorizeCoinjoin.mock.calls[0]?.[0]).not.toHaveProperty('payment');
+            expect(getSession(store)).not.toHaveProperty('authorizedPaymentId');
+            expect(getRegisteredAccount()).toMatchObject({ payment: undefined, utxos: [] });
+        });
+
+        it('authorizes no paid payment', async () => {
+            const store = initPaymentStore({ payment: { ...PAYMENT, paidTxid: 'b2'.repeat(32) } });
+
+            await store.dispatch(
+                coinjoinAccountActions.startCoinjoinSessionThunk(PAYMENT_ACCOUNT, PAYMENT_SESSION),
+            );
+
+            expect(authorizeCoinjoin.mock.calls[0]?.[0]).not.toHaveProperty('payment');
+            expect(getRegisteredAccount()).toMatchObject({
+                payment: undefined,
+                utxos: [expect.objectContaining({ outpoint: ANCHOR })],
+            });
         });
     });
 });

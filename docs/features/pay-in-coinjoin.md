@@ -1,8 +1,9 @@
 # Pay in coinjoin (Suite Dark + Firmware Dark)
 
-Status: work in progress on branches `feat/pay-in-coinjoin` (Suite Dark) and `feat/coinjoin-payment`
-(Firmware Dark, `~/repos/firmware-dark`). In Suite Dark, protobuf, Connect and the coinjoin client are done (the
-client part as upstream-bound commits); Suite state and UI are not. Nothing here is released.
+Status: work in progress on branches `mroz22/pay-in-coinjoin` (Suite Dark) and `feat/coinjoin-payment`
+(Firmware Dark, `~/repos/firmware-dark`). In Suite Dark, protobuf, Connect, the coinjoin client (the client part as
+upstream-bound commits) and a minimal Suite state and UI are done, covered by unit tests only: nothing has run against
+Firmware Dark or a coordinator yet. Nothing here is released.
 
 A Privacy (coinjoin) account pays a third party from inside a coinjoin round: the payment is one more output of the
 round, registered by the client like any other output, so the payee receives a coinjoin output and the payer needs
@@ -227,16 +228,56 @@ more and the payment may get a new anchor.
 
 ### Suite (`suite/coinjoin`, UI)
 
-- Payment state on the coinjoin account (`pending` with its anchor, `in-round`, signed attempts with txid and inputs,
-  `paid`, `cancelled`), persisted as an optional field of the existing `coinjoinAccounts` object: no IndexedDB
-  migration. Offered only on remembered wallets.
-- `authorizeCoinjoinThunk` passes the pending payment and its anchor; the session restore path does the same.
-  After the payment is paid, the next authorization has no payment.
-- Entry point on Privacy accounts: one payee, exact amount, no fee picker or RBF; shown only with the capability.
-- During `authorizeCoinjoin` with a payment the device sends `ButtonRequest_ConfirmOutput`, which Suite routes to the
-  transaction review modal today; show a dedicated "confirm the payment on your Trezor" modal instead.
-- Pending payment with a cancel action on the coinjoin tab (see Decisions).
-- History: show "Paid X to address" under the coinjoin row from the stored payment.
+Done in a minimal form (2026-11-24):
+
+- State: `CoinjoinAccount.payment` (`id`, `address`, `amount`, `anchor`, `attemptTxids`, `isBlocked`, `isCancelled`,
+  `paidTxid`), saved with the existing `coinjoinAccounts` object (`serializeCoinjoinAccount` keeps it, no IndexedDB
+  migration). The session keeps `authorizedPaymentId`, the payment the device approved in its last authorization. The
+  client gets a pending payment only with that id; the anchor of any other unpaid payment that is not cancelled is left
+  out of the utxos the client gets (its address still gets no change output). A payment created or anchored anew
+  around an authorization therefore waits for the next one, whatever the timing.
+- Offered when the account's own device is remembered, auto-eject is off and the device reports
+  `Capability_CoinJoinPayment`. Otherwise no payment is created, authorized or signed; an existing one stays visible
+  so that it can be cancelled.
+- Create (`createCoinjoinPaymentThunk`): only without a running session (a paused one is fine) and without an unpaid
+  payment. The payee is a P2WPKH or P2TR address of the network as typed (a bech32 address in mixed case is refused,
+  the stored one is lower case), not an address of the account, not an output of the account's history and not the
+  payee of an unpaid payment of another Privacy account of the network. The amount is at least
+  `COINJOIN_PAYMENT_MIN_AMOUNT` (10,000 sats) and at most what the 10 largest confirmed private coins that are not
+  detained pay after the mining fee for the payment output and those inputs, at the max fee rate of the session or of
+  the next one, minus 10,000 sats that stay in the account. The largest of those coins is the anchor; the id is 16
+  random letters and digits.
+- Authorization: `startCoinjoinSessionThunk` and `restoreCoinjoinSessionThunk` pass a pending payment that is offered
+  and whose anchor is a confirmed coin of the account; once it is paid, cancelled or blocked the next authorization
+  has none. A paused session with a payment to authorize is never restored automatically (Suite online, Tor enabled,
+  account synced, send form left): the payment card offers Resume instead. Every payment screen on the device thus
+  follows a click on the account's page, and a prompt nobody answers cannot hold the Connect lock that the signing of
+  other accounts needs. Owner decision to confirm.
+- Device prompt: Connect tags the `ButtonRequest_ConfirmOutput` of `authorizeCoinjoin` with a payment as
+  `{ type: 'coinjoin-payment' }`, and `DeviceContextModal` shows "Confirm the payment on your Trezor" instead of the
+  transaction review. Connect's device message log redacts `AuthorizeCoinJoin.payment`.
+- Signing: the attempts of `CoinjoinRequestSignatureEvent.payments` are saved before `TrezorConnect.signTransaction`.
+  An account whose attempts are not of its pending payment as the session authorized it, or whose payment is no
+  longer offered, does not sign (`Payment not recorded`).
+- Rejections: a blocking rejection (`rejectedPayments` with `isBlocked`) sets `isBlocked`. The payment is no longer
+  passed, its anchor is held back and the card asks the user to cancel it.
+- History, on every account update outside a critical phase: a confirmed transaction that spends the anchor and pays
+  exactly the amount to the payee marks the payment paid (`paidTxid`), whether the attempt was recorded or not. A
+  confirmed spend of the anchor without the payment drops a cancelled payment and gives a pending one a new anchor and
+  a new id; a blocked one waits for the user.
+- Cancel (`cancelCoinjoinPaymentThunk`, not in a critical phase): a payment without attempts, or a paid one, is
+  removed; otherwise it is cancelled until its anchor is spent. Both update the client.
+- Mixing: a payment whose anchor still needs a round keeps coinjoin startable and running when all coins are private;
+  without one the session ends as before.
+- UI: a "Pay in coinjoin" card under My coins on the Coinjoin page: the form (payee, amount in the user's bitcoin
+  unit) or the payment with its status (waiting, paused, needs a restart, unavailable, blocked, sending, cancelled,
+  paid), Resume, Cancel or Dismiss, and the note that an earlier attempt may still confirm until the reserved coin is
+  spent.
+
+Left out, optional: the history line "Paid X to address", editing a payment (cancel and create a new one for now),
+more payments per account, other payee types, send max, the coordinator's allowed amounts and fee in Suite's
+maximum, clearing `isBlocked` after a coordinator change, a warning before forgetting or un-remembering a wallet
+whose payment has attempts, keeping the anchor out of the coin selection of regular sends.
 
 Notes for this stage, from the coinjoin client as it is now:
 
@@ -255,7 +296,8 @@ Notes for this stage, from the coinjoin client as it is now:
   Never restart automatically.
 - `authorizeCoinjoinThunk` and the session restore path pass the payment and its anchor next to the capped
   `maxCoordinatorFeeRate`. Connect ignores `preauthorized` with a payment, so a restore with a payment shows the payment
-  screen on the device again. The restore registers the account only if the session still exists; keep that order.
+  screen on the device again; Suite therefore restores such a session only on the user's Resume. The restore registers
+  the account only if the session still exists; keep that order.
 - Pass a changed, cancelled or removed payment to the client only when no session is in a critical phase, as
   `fetchAndUpdateAccountThunk` already does for account updates; `updateClientAccountThunk` does not check this itself.
   The client refuses to sign a round whose registered payment changed, and that fails the inputs of every account in
@@ -275,8 +317,9 @@ Notes for this stage, from the coinjoin client as it is now:
 
 1. Firmware Dark: protobuf, authorization, approver, cache, capability; unit tests and device tests on the emulator.
 2. Suite Dark: protobuf regeneration and Connect.
-3. Coinjoin client (done) and Suite state, unit tests with the mocked coordinator and middleware.
-4. UI.
+3. Coinjoin client and Suite state, unit tests with the mocked coordinator and middleware (done, Suite in a minimal
+   form).
+4. UI (done, minimal).
 5. End to end on regtest: Firmware Dark emulator, the local coordinator, Suite with
    `--state.wallet.coinjoin.debug.coinjoinConfigOverride.regtest.coordinatorUrl=…`.
 6. Pull requests, review, testing, merge.

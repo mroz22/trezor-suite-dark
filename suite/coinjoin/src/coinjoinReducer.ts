@@ -6,6 +6,7 @@ import { RoundPhase } from '@trezor/coinjoin';
 import { type CoinjoinAccountAction } from './coinjoinAccountActions';
 import { type CoinjoinClientAction } from './coinjoinClientActions';
 import * as COINJOIN from './coinjoinConstants';
+import { type CoinjoinPaymentAction } from './coinjoinPaymentActions';
 import {
     type CoinjoinAccount,
     type CoinjoinCoordinatorSettings,
@@ -44,6 +45,7 @@ type StorageLoadCoinjoinAction = {
 export type CoinjoinAction =
     | CoinjoinAccountAction
     | CoinjoinClientAction
+    | CoinjoinPaymentAction // Suite Dark: pay in coinjoin
     | StorageLoadCoinjoinAction
     | ReturnType<typeof accountsActions.createAccount>
     | ReturnType<typeof accountsActions.removeAccount>;
@@ -296,6 +298,12 @@ const restoreSession = (
     delete account.session.isAutoStopEnabled;
     delete account.session.timeEnded;
     account.session.timeCreated = Date.now();
+    // Suite Dark: pay in coinjoin, the restore authorized this payment or none.
+    if (payload.authorizedPaymentId) {
+        account.session.authorizedPaymentId = payload.authorizedPaymentId;
+    } else {
+        delete account.session.authorizedPaymentId;
+    }
 };
 
 // Should store at most 3 latest checkpoints, from latest to oldest
@@ -575,6 +583,16 @@ export const coinjoinReducer = (
             case COINJOIN.ACCOUNT_ADD_ANONYMITY_LEVEL:
                 addAnonymityLevel(draft, action.payload);
                 break;
+            // Suite Dark: pay in coinjoin, see docs/features/pay-in-coinjoin.md.
+            case COINJOIN.ACCOUNT_SET_PAYMENT: {
+                const account = getAccount(draft, action.payload.accountKey);
+                if (account && action.payload.payment) {
+                    account.payment = action.payload.payment;
+                } else if (account) {
+                    delete account.payment;
+                }
+                break;
+            }
             // no default
         }
     });

@@ -10,7 +10,14 @@ import {
 } from '@suite-common/message-system';
 import { createTestCompositionRoot, testMocks } from '@suite-common/test-utils';
 import { asNetworkSymbol } from '@suite-common/wallet-config';
-import { type AccountsRootState, prepareAccountsReducer } from '@suite-common/wallet-core';
+import {
+    type AccountsRootState,
+    type TransactionsRootState,
+    type WalletSettingsRootState,
+    prepareAccountsReducer,
+    prepareWalletSettingsReducer,
+    transactionsInitialState,
+} from '@suite-common/wallet-core';
 import { mockSetAccountAddMetadata } from '@suite-common/wallet-core/mocks';
 import '@suite-common/test-utils/globalOverrides';
 import { mockActionType, mockReducer } from '@trezor/redux-utils/mocks';
@@ -47,6 +54,11 @@ const rootReducer = combineReducers({
         }),
         coinjoin: coinjoinReducer,
         selectedAccount: selectedAccountReducer,
+        settings: prepareWalletSettingsReducer({
+            actionTypes: { storageLoad: mockActionType('storageLoad') },
+            reducers: { storageLoadWalletSettings: mockReducer() },
+        }),
+        transactions: () => transactionsInitialState,
     }),
 });
 
@@ -57,12 +69,17 @@ type State = AccountsRootState &
     MessageSystemRootState &
     RouterRootState &
     SuiteOnlineRootState &
-    TorRootState & {
+    TorRootState &
+    TransactionsRootState &
+    WalletSettingsRootState & {
         device: Record<never, never>;
         discreetMode: { isActive: boolean };
     };
 
-const initStore = ({ device, router, suite, tor, wallet }: Partial<State> = {}) => {
+// Suite Dark: the fixtures leave out the wallet slices they do not need.
+type InitStoreParams = Partial<Omit<State, 'wallet'>> & { wallet?: Partial<State['wallet']> };
+
+const initStore = ({ device, router, suite, tor, wallet }: InitStoreParams = {}) => {
     const preloadedState: State = rootReducer(undefined, { type: 'init' });
 
     if (device) {

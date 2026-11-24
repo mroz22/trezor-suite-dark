@@ -9848,6 +9848,140 @@ export const messages = defineMessages({
             'Label of the fewest inputs a coinjoin round needs, in coinjoin settings; rounds with fewer are skipped',
         defaultMessage: 'Fewest inputs in a round',
     },
+    TR_COINJOIN_PAYMENT_HEADING: {
+        id: 'TR_COINJOIN_PAYMENT_HEADING',
+        description:
+            'Heading of the pay in coinjoin card on the coinjoin page of a Privacy account',
+        defaultMessage: 'Pay in coinjoin',
+    },
+    TR_COINJOIN_PAYMENT_DESCRIPTION: {
+        id: 'TR_COINJOIN_PAYMENT_DESCRIPTION',
+        description:
+            'Description of the pay in coinjoin card on the coinjoin page of a Privacy account',
+        defaultMessage:
+            'Pay someone from your private coins as one more output of a coinjoin round. The payment goes out with a later round while coinjoin runs. Your Trezor shows the payment for approval whenever coinjoin starts or resumes with it.',
+    },
+    TR_COINJOIN_PAYMENT_ADD: {
+        id: 'TR_COINJOIN_PAYMENT_ADD',
+        description: 'Button that adds a payment in the pay in coinjoin card',
+        defaultMessage: 'Add payment',
+    },
+    TR_COINJOIN_PAYMENT_STOP_COINJOIN: {
+        id: 'TR_COINJOIN_PAYMENT_STOP_COINJOIN',
+        description: 'Shown instead of the pay in coinjoin form while coinjoin runs in the account',
+        defaultMessage: 'Stop coinjoin to add a payment.',
+    },
+    TR_COINJOIN_PAYMENT_EXISTS: {
+        id: 'TR_COINJOIN_PAYMENT_EXISTS',
+        description:
+            'Shown in the pay in coinjoin form when the account already has an unpaid payment',
+        defaultMessage: 'This account already has a payment.',
+    },
+    TR_COINJOIN_PAYMENT_NO_PRIVATE_COINS: {
+        id: 'TR_COINJOIN_PAYMENT_NO_PRIVATE_COINS',
+        description:
+            'Shown instead of the pay in coinjoin form when the private coins of the account cannot fund a payment',
+        defaultMessage: 'Not enough private coins for a payment yet. Keep mixing and try again.',
+    },
+    TR_COINJOIN_PAYMENT_INVALID_ADDRESS: {
+        id: 'TR_COINJOIN_PAYMENT_INVALID_ADDRESS',
+        description: 'Error of the recipient address in the pay in coinjoin form',
+        defaultMessage: 'Enter a native SegWit or Taproot address of this network.',
+    },
+    TR_COINJOIN_PAYMENT_OWN_ADDRESS: {
+        id: 'TR_COINJOIN_PAYMENT_OWN_ADDRESS',
+        description: 'Error of the recipient address in the pay in coinjoin form',
+        defaultMessage: 'This is an address of this account.',
+    },
+    TR_COINJOIN_PAYMENT_ADDRESS_IN_USE: {
+        id: 'TR_COINJOIN_PAYMENT_ADDRESS_IN_USE',
+        description:
+            'Error of the recipient address in the pay in coinjoin form: an output of the account history or the payee of an unpaid payment of another Privacy account',
+        defaultMessage:
+            'Your Privacy accounts already paid or are paying this address. Ask the payee for a new address.',
+    },
+    TR_COINJOIN_PAYMENT_INVALID_AMOUNT: {
+        id: 'TR_COINJOIN_PAYMENT_INVALID_AMOUNT',
+        description: 'Error of the amount in the pay in coinjoin form',
+        defaultMessage: 'Enter a positive amount in whole sats.',
+    },
+    TR_COINJOIN_PAYMENT_AMOUNT_TOO_LOW: {
+        id: 'TR_COINJOIN_PAYMENT_AMOUNT_TOO_LOW',
+        description:
+            'Error of the amount in the pay in coinjoin form, {min} is the smallest amount in sats',
+        defaultMessage: 'The amount must be at least {min, number} sat.',
+    },
+    TR_COINJOIN_PAYMENT_AMOUNT_TOO_HIGH: {
+        id: 'TR_COINJOIN_PAYMENT_AMOUNT_TOO_HIGH',
+        description:
+            'Error of the amount in the pay in coinjoin form; no number, so that discreet mode keeps the balance hidden',
+        defaultMessage:
+            'Your private coins cannot pay this amount with its mining fee and leave 10,000 sat in the account.',
+    },
+    TR_COINJOIN_PAYMENT_WAITING: {
+        id: 'TR_COINJOIN_PAYMENT_WAITING',
+        description: 'Status of a payment in the pay in coinjoin card',
+        defaultMessage:
+            'Waiting for a coinjoin round. Keep coinjoin running with Suite open and your Trezor connected.',
+    },
+    TR_COINJOIN_PAYMENT_PAUSED: {
+        id: 'TR_COINJOIN_PAYMENT_PAUSED',
+        description:
+            'Status of a payment in the pay in coinjoin card while the coinjoin session is paused',
+        defaultMessage:
+            'Coinjoin is paused. Resume it to continue; your Trezor shows the payment for approval.',
+    },
+    TR_COINJOIN_PAYMENT_NEEDS_RESTART: {
+        id: 'TR_COINJOIN_PAYMENT_NEEDS_RESTART',
+        description:
+            'Status of a payment in the pay in coinjoin card when the running coinjoin session did not approve it',
+        defaultMessage: 'Stop coinjoin and start it again to approve this payment on your Trezor.',
+    },
+    TR_COINJOIN_PAYMENT_UNAVAILABLE: {
+        id: 'TR_COINJOIN_PAYMENT_UNAVAILABLE',
+        description:
+            'Status of a payment in the pay in coinjoin card when the wallet is not remembered, auto-eject is on or the device lacks the capability',
+        defaultMessage:
+            'This wallet must be remembered, without auto-eject, on a Trezor that supports coinjoin payments. Until then the payment waits.',
+    },
+    TR_COINJOIN_PAYMENT_BLOCKED: {
+        id: 'TR_COINJOIN_PAYMENT_BLOCKED',
+        description:
+            'Status of a payment in the pay in coinjoin card after the coordinator refused its payee or amount',
+        defaultMessage:
+            'The coordinator refused this payment, most likely because the address was already used. Cancel it and ask the payee for a new address.',
+    },
+    TR_COINJOIN_PAYMENT_SENDING: {
+        id: 'TR_COINJOIN_PAYMENT_SENDING',
+        description:
+            'Status of a payment in the pay in coinjoin card when its coinjoin transaction is not confirmed yet',
+        defaultMessage: 'Sent in a coinjoin transaction, waiting for confirmation.',
+    },
+    TR_COINJOIN_PAYMENT_CANCELLED: {
+        id: 'TR_COINJOIN_PAYMENT_CANCELLED',
+        description:
+            'Status of a cancelled payment in the pay in coinjoin card, until its reserved coin is mixed',
+        defaultMessage:
+            'Start coinjoin to mix the reserved coin. Until then an earlier attempt may still confirm and you cannot add a new payment.',
+    },
+    TR_COINJOIN_PAYMENT_PAID: {
+        id: 'TR_COINJOIN_PAYMENT_PAID',
+        description: 'Status of a confirmed payment in the pay in coinjoin card',
+        defaultMessage: 'Paid.',
+    },
+    TR_COINJOIN_PAYMENT_EARLIER_ATTEMPT: {
+        id: 'TR_COINJOIN_PAYMENT_EARLIER_ATTEMPT',
+        description:
+            'Note in the pay in coinjoin card when a coinjoin transaction with the payment was already signed',
+        defaultMessage:
+            'An earlier attempt may still confirm until the reserved coin is spent. If coinjoin stopped because the coordinator misbehaved, cancel the payment.',
+    },
+    TR_COINJOIN_PAYMENT_CONFIRM_ON_DEVICE: {
+        id: 'TR_COINJOIN_PAYMENT_CONFIRM_ON_DEVICE',
+        description:
+            'Modal heading while the Trezor shows the address and amount of a coinjoin payment for approval',
+        defaultMessage: 'Confirm the payment on your Trezor',
+    },
     TR_MAX_MINING_FEE: {
         id: 'TR_MAX_MINING_FEE',
         description: 'Coinjoin strategy item - fee amount',

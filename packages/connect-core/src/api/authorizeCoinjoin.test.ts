@@ -87,6 +87,19 @@ describe('AuthorizeCoinjoin payment', () => {
         );
     });
 
+    it('tags the payment screens, which send ButtonRequest_ConfirmOutput', () => {
+        const { method } = createMethod({ ...base, payment }, []);
+        const { method: methodWithoutPayment } = createMethod(base, []);
+
+        expect(method.getButtonRequestData('ButtonRequest_ConfirmOutput')).toEqual({
+            type: 'coinjoin-payment',
+        });
+        expect(method.getButtonRequestData('ButtonRequest_Other')).toBeUndefined();
+        expect(
+            methodWithoutPayment.getButtonRequestData('ButtonRequest_ConfirmOutput'),
+        ).toBeUndefined();
+    });
+
     it('keeps the preauthorized shortcut without a payment', async () => {
         const { method, commands } = createMethod({ ...base, preauthorized: true }, []);
 

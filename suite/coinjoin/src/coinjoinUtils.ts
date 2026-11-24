@@ -16,6 +16,7 @@ import {
 } from '@trezor/coinjoin';
 import { BigNumber, isArrayMember } from '@trezor/utils';
 
+import { getClientCoinjoinPayment, getHeldBackCoinjoinAnchor } from './coinjoinPaymentUtils';
 import {
     type AnonymityGainPerRound,
     type CoinjoinAccount,
@@ -134,7 +135,7 @@ export const transformCoinjoinStatus = ({
 });
 
 // convert suite account type to @trezor/coinjoin RegisterAccountParams scriptType
-const getCoinjoinAccountScriptType = (path: string) => {
+export const getCoinjoinAccountScriptType = (path: string) => {
     const bip43 = getBip43Type(path);
     switch (bip43) {
         case 'bip86':
@@ -216,7 +217,7 @@ export const getCoinjoinAccountAddresses = ({
 
 type GetRegisterAccountParamsOptions = { session: CoinjoinSessionParameters } & Pick<
     CoinjoinAccount,
-    'rawLiquidityClue'
+    'rawLiquidityClue' | 'payment'
 >;
 
 /**
@@ -224,7 +225,7 @@ type GetRegisterAccountParamsOptions = { session: CoinjoinSessionParameters } & 
  */
 export const getRegisterAccountParams = (
     account: Account,
-    { rawLiquidityClue, session }: GetRegisterAccountParamsOptions,
+    { rawLiquidityClue, session, payment }: GetRegisterAccountParamsOptions,
 ): RegisterAccountParams => ({
     scriptType: getCoinjoinAccountScriptType(account.path),
     accountKey: account.key,
@@ -234,8 +235,14 @@ export const getRegisterAccountParams = (
     skipRounds: session.skipRounds,
     maxFeePerKvbyte: session.maxFeePerKvbyte,
     maxCoordinatorFeeRate: session.maxCoordinatorFeeRate,
-    utxos: getCoinjoinAccountUtxos(account.utxo, account.addresses?.anonymitySet),
+    utxos: getCoinjoinAccountUtxos(account.utxo, account.addresses?.anonymitySet).filter(
+        // Suite Dark: pay in coinjoin, see docs/features/pay-in-coinjoin.md. Only the utxos, so
+        // that the address of a held back anchor still gets no change output.
+        ({ outpoint }) =>
+            outpoint !== getHeldBackCoinjoinAnchor(payment, session.authorizedPaymentId),
+    ),
     changeAddresses: getCoinjoinAccountAddresses(account),
+    payment: getClientCoinjoinPayment(payment, session.authorizedPaymentId),
 });
 
 const getSkipRoundsRate = (skipRounds?: [number, number]) =>

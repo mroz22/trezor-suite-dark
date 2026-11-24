@@ -26,6 +26,8 @@ const blacklist: Record<string, string[] | true> = {
     PublicKey: ['node', 'xpub'],
     DecryptedMessage: ['message', 'address'],
     Features: true,
+    // Suite Dark: the payee, amount and anchor of a Firmware Dark coinjoin payment.
+    AuthorizeCoinJoin: ['payment'],
 };
 
 type AbortableOptions = {

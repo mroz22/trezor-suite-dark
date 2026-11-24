@@ -4,6 +4,7 @@ import { type NetworkSymbol } from '@suite-common/wallet-config';
 import { type Account, type AccountKey } from '@suite-common/wallet-types';
 import {
     type CoinjoinClientVersion,
+    type CoinjoinPayment,
     type CoinjoinPrisonInmate,
     type CoinjoinStatusEvent,
     type RegisterAccountParams,
@@ -33,6 +34,9 @@ export interface CoinjoinSessionParameters {
     skipRounds?: [number, number];
     maxFeePerKvbyte: number;
     maxCoordinatorFeeRate: number;
+    // Suite Dark: pay in coinjoin, see docs/features/pay-in-coinjoin.md. Id of the payment the
+    // device approved in the session's last authorization; the client gets no other payment.
+    authorizedPaymentId?: string;
 }
 
 export interface CoinjoinClientInstance extends Pick<
@@ -77,6 +81,15 @@ export interface CoinjoinTxCandidate {
     roundId: string;
 }
 
+// Suite Dark: pay in coinjoin, see docs/features/pay-in-coinjoin.md. The payment of a Privacy
+// account with the txids of its signed attempts. A blocked payment was refused by the coordinator
+// for its payee or amount, a paid one confirmed in `paidTxid`.
+export type CoinjoinAccountPayment = CoinjoinPayment & {
+    attemptTxids: string[];
+    isBlocked?: boolean;
+    paidTxid?: string;
+};
+
 export interface CoinjoinLegalDocuments {
     zkSNACKs: string;
     trezor: string;
@@ -93,6 +106,7 @@ export interface CoinjoinAccount {
     transactionCandidates?: CoinjoinTxCandidate[];
     prison?: Record<string, Omit<CoinjoinPrisonInmate, 'id' | 'accountKey'>>;
     agreedToLegalDocumentVersions?: CoinjoinLegalDocuments;
+    payment?: CoinjoinAccountPayment; // Suite Dark: pay in coinjoin
 }
 
 export interface CoinjoinDebugSettings {

@@ -15,6 +15,7 @@ import {
     type AccountsRootState,
     type BlockchainRootState,
     type TransactionsRootState,
+    type WalletSettingsRootState,
     accountsActions,
     selectAccountByKey,
     selectNetworkBlockchainInfo,
@@ -34,6 +35,12 @@ import { promiseAllSequence } from '@trezor/utils';
 
 import * as coinjoinClientActions from './coinjoinClientActions';
 import * as COINJOIN from './coinjoinConstants';
+import { coinjoinAccountSetPayment, syncCoinjoinPaymentThunk } from './coinjoinPaymentActions';
+import {
+    selectCoinjoinPaymentByAccountKey,
+    selectCoinjoinPaymentToAuthorizeByAccountKey,
+} from './coinjoinPaymentSelectors';
+import { getConnectCoinjoinPayment } from './coinjoinPaymentUtils';
 import {
     type CoinjoinRootState,
     type SuiteOnlineRootState,
@@ -51,6 +58,7 @@ import {
 import { CoinjoinService } from './coinjoinService';
 import {
     type CoinjoinAccount,
+    type CoinjoinAccountPayment,
     type CoinjoinConfig,
     type CoinjoinDiscoveryCheckpoint,
     type CoinjoinSessionParameters,
@@ -116,9 +124,13 @@ const coinjoinAccountPreloading = createAction(
     (isPreloading: boolean) => ({ payload: { isPreloading } }),
 );
 
-const coinjoinSessionRestore = createAction(COINJOIN.SESSION_RESTORE, (accountKey: string) => ({
-    payload: { accountKey },
-}));
+const coinjoinSessionRestore = createAction(
+    COINJOIN.SESSION_RESTORE,
+    // Suite Dark: pay in coinjoin, the payment the restore authorized.
+    (accountKey: string, authorizedPaymentId?: string) => ({
+        payload: { accountKey, authorizedPaymentId },
+    }),
+);
 
 const coinjoinAccountDiscoveryReset = createAction(
     COINJOIN.ACCOUNT_DISCOVERY_RESET,
@@ -165,6 +177,7 @@ export const isCoinjoinAccountPersistenceAction = isAnyOf(
     coinjoinAccountUpdateAnonymity,
     coinjoinAccountUpdateMaxMiningFee,
     coinjoinAccountToggleSkipRounds,
+    coinjoinAccountSetPayment, // Suite Dark: pay in coinjoin
 );
 
 export type CoinjoinAccountAction = ReturnType<
@@ -234,12 +247,13 @@ export const updateClientAccountThunk =
         const coinjoinAccount = selectCoinjoinAccountByKey(state, account.key);
         if (!coinjoinAccount?.session || !accountToUpdate) return;
 
-        const { rawLiquidityClue, session } = coinjoinAccount;
+        const { rawLiquidityClue, session, payment } = coinjoinAccount;
 
         client.updateAccount(
             getRegisterAccountParams(accountToUpdate, {
                 rawLiquidityClue,
                 session,
+                payment,
             }),
         );
 
@@ -412,7 +426,8 @@ const cleanPendingTransactionsThunk =
         }
     };
 
-type FetchAndUpdateAccountThunkState = CoinjoinRootState &
+type FetchAndUpdateAccountThunkState = AccountsRootState &
+    CoinjoinRootState &
     SelectedAccountRootState &
     TransactionsRootState;
 
@@ -506,6 +521,9 @@ export const fetchAndUpdateAccountThunk =
                         accountInfo,
                     ),
                 );
+
+                // Suite Dark: pay in coinjoin, mark it paid or re-anchor it before the client gets it.
+                dispatch(syncCoinjoinPaymentThunk(account.key));
 
                 // update account in CoinjoinClient
                 dispatch(updateClientAccountThunk(account));
@@ -678,7 +696,12 @@ export const rescanCoinjoinAccountThunk =
 type AuthorizeCoinjoinThunkState = DeviceRootState;
 
 const authorizeCoinjoinThunk =
-    (account: Account, coordinator: string, params: CoinjoinSessionParameters) =>
+    (
+        account: Account,
+        coordinator: string,
+        params: CoinjoinSessionParameters,
+        payment?: CoinjoinAccountPayment, // Suite Dark: pay in coinjoin
+    ) =>
     async (dispatch: Dispatch, getState: () => AuthorizeCoinjoinThunkState) => {
         const device = selectSelectedDevice(getState());
 
@@ -695,6 +718,7 @@ const authorizeCoinjoinThunk =
             ),
             maxFeePerKvbyte: params.maxFeePerKvbyte,
             maxRounds: params.maxRounds,
+            ...(payment && { payment: getConnectCoinjoinPayment(payment) }),
         });
 
         if (auth.success) {
@@ -713,7 +737,11 @@ const authorizeCoinjoinThunk =
         );
     };
 
-type StartCoinjoinSessionThunkState = CoinjoinRootState;
+type StartCoinjoinSessionThunkState = AccountsRootState &
+    CoinjoinRootState &
+    DeviceRootState &
+    TransactionsRootState &
+    WalletSettingsRootState;
 
 // called from coinjoin account UI
 export const startCoinjoinSessionThunk =
@@ -731,11 +759,27 @@ export const startCoinjoinSessionThunk =
             return;
         }
 
+        // Suite Dark: pay in coinjoin, see docs/features/pay-in-coinjoin.md. The device approves
+        // the payment with the session, and the client gets only the payment it approved.
+        dispatch(syncCoinjoinPaymentThunk(account.key));
+        const authorizedPayment = selectCoinjoinPaymentToAuthorizeByAccountKey(
+            getState(),
+            account.key,
+        );
+        const sessionParams = authorizedPayment
+            ? { ...params, authorizedPaymentId: authorizedPayment.id }
+            : params;
+
         dispatch(coinjoinSessionStarting(account.key, true));
 
         // authorize CoinjoinSession on Trezor
         const authResult = await dispatch(
-            authorizeCoinjoinThunk(account, api.client.settings.coordinatorName, params),
+            authorizeCoinjoinThunk(
+                account,
+                api.client.settings.coordinatorName,
+                sessionParams,
+                authorizedPayment,
+            ),
         );
 
         if (authResult) {
@@ -743,7 +787,8 @@ export const startCoinjoinSessionThunk =
             api.client.registerAccount(
                 getRegisterAccountParams(account, {
                     rawLiquidityClue: coinjoinAccount.rawLiquidityClue,
-                    session: params,
+                    session: sessionParams,
+                    payment: selectCoinjoinPaymentByAccountKey(getState(), account.key),
                 }),
             );
             // switch to the account's mixing progress
@@ -756,7 +801,9 @@ export const startCoinjoinSessionThunk =
 type RestoreCoinjoinSessionThunkState = AccountsRootState &
     CoinjoinRootState &
     DeviceRootState &
-    LocksRootState;
+    LocksRootState &
+    TransactionsRootState &
+    WalletSettingsRootState;
 
 // called from coinjoin account UI
 // try to restore current paused CoinjoinSession
@@ -803,6 +850,13 @@ export const restoreCoinjoinSessionThunk =
         }
 
         const { rawLiquidityClue, session } = coinjoinAccount;
+        // Suite Dark: pay in coinjoin, see docs/features/pay-in-coinjoin.md. The device approves
+        // the payment again, Connect skips the preauthorized shortcut with a payment.
+        dispatch(syncCoinjoinPaymentThunk(account.key));
+        const authorizedPayment = selectCoinjoinPaymentToAuthorizeByAccountKey(
+            getState(),
+            account.key,
+        );
 
         dispatch(coinjoinSessionStarting(accountKey, true));
 
@@ -818,6 +872,7 @@ export const restoreCoinjoinSessionThunk =
             ),
             maxFeePerKvbyte: session.maxFeePerKvbyte,
             maxRounds: session.maxRounds - session.signedRounds.length,
+            ...(authorizedPayment && { payment: getConnectCoinjoinPayment(authorizedPayment) }),
         });
 
         // The session may end during the authorization, e.g. when the coordinator lies.
@@ -825,12 +880,13 @@ export const restoreCoinjoinSessionThunk =
 
         if (auth.success && hasSession) {
             // dispatch data to reducer
-            dispatch(coinjoinSessionRestore(account.key));
+            dispatch(coinjoinSessionRestore(account.key, authorizedPayment?.id));
             // register authorized account
             client.registerAccount(
                 getRegisterAccountParams(account, {
                     rawLiquidityClue,
-                    session,
+                    session: { ...session, authorizedPaymentId: authorizedPayment?.id },
+                    payment: selectCoinjoinPaymentByAccountKey(getState(), account.key),
                 }),
             );
         } else if (!auth.success) {
@@ -860,14 +916,17 @@ export const pauseAllCoinjoinSessionsThunk =
         });
     };
 
-type RestorePausedCoinjoinSessionsThunkState = CoinjoinRootState &
+type RestorePausedCoinjoinSessionsThunkState = AccountsRootState &
+    CoinjoinRootState &
     DeviceRootState &
     LocksRootState &
     MessageSystemRootState &
     RouterRootState &
     SelectedAccountRootState &
     SuiteOnlineRootState &
-    TorRootState;
+    TorRootState &
+    TransactionsRootState &
+    WalletSettingsRootState;
 
 // check for blocking conditions of interrupted sessions and restore those eligible
 export const restorePausedCoinjoinSessionsThunk =
@@ -879,8 +938,14 @@ export const restorePausedCoinjoinSessionsThunk =
                 selectRouteName(state) === 'wallet-send' &&
                 key === state.wallet.selectedAccount.account?.key;
             const blocker = selectCoinjoinSessionBlockerByAccountKey(state, key);
+            // Suite Dark: pay in coinjoin, the user resumes a session whose payment the device
+            // approves again.
+            const hasPaymentToAuthorize = !!selectCoinjoinPaymentToAuthorizeByAccountKey(
+                state,
+                key,
+            );
 
-            return !hasSendFormOpen && !blocker && session?.paused;
+            return !hasSendFormOpen && !blocker && !hasPaymentToAuthorize && session?.paused;
         });
 
         eligibleAccounts.forEach(account => dispatch(restoreCoinjoinSessionThunk(account.key)));

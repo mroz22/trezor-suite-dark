@@ -21,6 +21,7 @@ import { ROUND_MIN_INPUT_COUNT } from '@trezor/coinjoin/src/constants';
 import { createWeakMapSelector } from '@trezor/redux-utils';
 import { BigNumber, deepEqual } from '@trezor/utils';
 
+import { hasCoinjoinPaymentToMix } from './coinjoinPaymentUtils';
 import { type CoinjoinState } from './coinjoinTypes';
 import {
     breakdownCoinjoinBalance,
@@ -440,6 +441,10 @@ export const selectIsNothingToAnonymizeByAccountKey = (
     const anonymitySet = account?.addresses?.anonymitySet || {};
     const utxos = account?.utxo || [];
 
+    // Suite Dark: pay in coinjoin, a payment still needs a round.
+    const { payment, session } = selectCoinjoinAccountByKey(state, accountKey) ?? {};
+    if (hasCoinjoinPaymentToMix({ payment, session, utxos })) return false;
+
     // Return true if all non-private funds are too small.
     return utxos
         .filter(utxo => (anonymitySet[utxo.address] ?? 1) < targetAnonymity)
@@ -594,7 +599,14 @@ export const selectCurrentCoinjoinWheelStates = (
     // account states
     const isAccountEmpty = !balance || balance === '0';
     const isNonePrivate = sessionProgress === 0;
-    const isAllPrivate = notAnonymized === '0';
+    // Suite Dark: pay in coinjoin, a payment still needs a round.
+    const isAllPrivate =
+        notAnonymized === '0' &&
+        !hasCoinjoinPaymentToMix({
+            payment: coinjoinAccount?.payment,
+            session: coinjoinAccount?.session,
+            utxos: selectSelectedAccount(state)?.utxo,
+        });
     const isCoinjoinUneco = !!balance && new BigNumber(balance).lt(UNECONOMICAL_COINJOIN_THRESHOLD);
 
     const agreedToLegalDocumentVersions = coinjoinAccount?.agreedToLegalDocumentVersions;

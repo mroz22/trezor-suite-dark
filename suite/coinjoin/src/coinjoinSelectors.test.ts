@@ -4,6 +4,13 @@ import { type AccountsRootState } from '@suite-common/wallet-core';
 import { mockAccountKey, mockWalletAccount } from '@suite-common/wallet-types/mocks';
 import { RoundPhase } from '@trezor/coinjoin';
 
+import {
+    ANCHOR_UTXO,
+    type GetPaymentStateParams,
+    PAYMENT,
+    ACCOUNT as PAYMENT_ACCOUNT,
+    getPaymentState,
+} from './__fixtures__/coinjoinPayment';
 import { initialState } from './coinjoinReducer';
 import {
     type CoinjoinRootState,
@@ -12,6 +19,7 @@ import {
     selectCoordinatorFeeRateCapBySymbol,
     selectHasCoinjoinSessionBySymbol,
     selectIsCoinjoinCoordinatorOverriddenBySymbol,
+    selectIsNothingToAnonymizeByAccountKey,
     selectMaxCoordinatorFeeRateByAccountKey,
     selectRegisteredUtxosByAccountKey,
 } from './coinjoinSelectors';
@@ -373,5 +381,29 @@ describe('selectRegisteredUtxosByAccountKey', () => {
         };
 
         expect(select({ prison })).toEqual(prison);
+    });
+});
+
+// Suite Dark: pay in coinjoin.
+describe('selectIsNothingToAnonymizeByAccountKey with a payment', () => {
+    const isNothingToAnonymize = (params: GetPaymentStateParams) =>
+        selectIsNothingToAnonymizeByAccountKey(getPaymentState(params), PAYMENT_ACCOUNT.key);
+
+    it('mixes all private coins while a payment or a cancelled one needs a round', () => {
+        expect(isNothingToAnonymize({ payment: null })).toBe(true);
+        expect(isNothingToAnonymize({})).toBe(false);
+        expect(isNothingToAnonymize({ payment: { ...PAYMENT, isCancelled: true } })).toBe(false);
+    });
+
+    it('has nothing to mix for a paid or blocked payment or an anchor spent in the mempool', () => {
+        expect(isNothingToAnonymize({ payment: { ...PAYMENT, paidTxid: 'b2'.repeat(32) } })).toBe(
+            true,
+        );
+        expect(isNothingToAnonymize({ payment: { ...PAYMENT, isBlocked: true } })).toBe(true);
+        expect(
+            isNothingToAnonymize({
+                accounts: [{ ...PAYMENT_ACCOUNT, utxo: [{ ...ANCHOR_UTXO, confirmations: 0 }] }],
+            }),
+        ).toBe(true);
     });
 });

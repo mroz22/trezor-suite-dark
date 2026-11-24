@@ -4,11 +4,17 @@ import { asNetworkSymbol } from '@suite-common/wallet-config';
 import { accountsActions } from '@suite-common/wallet-core';
 import { type Account, type SelectedAccountLoaded } from '@suite-common/wallet-types';
 import { mockAccountKey } from '@suite-common/wallet-types/mocks';
+import { getUtxoOutpoint } from '@suite-common/wallet-utils';
 import { type AnonymitySet } from '@trezor/blockchain-link';
 import { DEVICE, type StaticSessionId } from '@trezor/connect';
 
 import * as COINJOIN from '../coinjoinConstants';
-import { type CoinjoinAccount, type CoinjoinSession, type CoinjoinState } from '../coinjoinTypes';
+import {
+    type CoinjoinAccount,
+    type CoinjoinAccountPayment,
+    type CoinjoinSession,
+    type CoinjoinState,
+} from '../coinjoinTypes';
 
 type FixtureDevice = {
     available: boolean;
@@ -19,6 +25,7 @@ type FixtureDevice = {
         staticSessionId: string;
     };
     type: string;
+    features?: { capabilities: string[] };
 };
 
 type FixtureState = Partial<{
@@ -160,6 +167,44 @@ const STATE_WITH_INTERRUPTED_SESSION = {
         },
     },
 };
+
+// Suite Dark: pay in coinjoin, account B has a payment its remembered Firmware Dark device approves.
+const PAYMENT_ANCHOR = { txid: 'a1'.repeat(32), vout: 1 };
+const PAYMENT_B: CoinjoinAccountPayment = {
+    id: 'payment1',
+    address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
+    amount: 50_000,
+    anchor: getUtxoOutpoint(PAYMENT_ANCHOR),
+    attemptTxids: [],
+};
+const getStateWithInterruptedPayment = (payment: CoinjoinAccountPayment) => ({
+    ...STATE_WITH_INTERRUPTED_SESSION,
+    device: {
+        ...STATE_WITH_INTERRUPTED_SESSION.device,
+        devices: [
+            DEVICE_A,
+            { ...DEVICE_B, features: { capabilities: ['Capability_CoinJoinPayment'] } },
+        ],
+    },
+    wallet: {
+        ...STATE_WITH_INTERRUPTED_SESSION.wallet,
+        accounts: [
+            ACCOUNT_A,
+            {
+                ...ACCOUNT_B,
+                utxo: [
+                    { address: 'address', amount: '300000', confirmations: 1, ...PAYMENT_ANCHOR },
+                ],
+            } as Account,
+        ],
+        coinjoin: {
+            ...STATE_WITH_INTERRUPTED_SESSION.wallet.coinjoin,
+            accounts: STATE_WITH_INTERRUPTED_SESSION.wallet.coinjoin.accounts.map(account =>
+                account.key === ACCOUNT_B_KEY ? { ...account, payment } : account,
+            ),
+        },
+    },
+});
 
 const PAUSE_ALL_INTERRUPTED_SESSIONS_ACTIONS = [
     {
@@ -376,5 +421,40 @@ export const fixtures: Fixture[] = [
             payload: true,
         },
         expectedActions: [],
+    },
+    {
+        description:
+            'do not restore a session whose payment the device would approve again when Suite goes online',
+        state: getStateWithInterruptedPayment(PAYMENT_B),
+        client: asNetworkSymbol('btc'),
+        connect: [{ success: true }],
+        action: {
+            type: '@suite/online-status',
+            payload: true,
+        },
+        expectedActions: [],
+    },
+    {
+        description:
+            'do not restore a session whose payment the device would approve again when its account syncs',
+        state: getStateWithInterruptedPayment(PAYMENT_B),
+        client: asNetworkSymbol('btc'),
+        connect: [{ success: true }],
+        action: {
+            type: accountsActions.endCoinjoinAccountSync.type,
+            payload: { accountKey: ACCOUNT_B.key, status: 'ready' },
+        },
+        expectedActions: [],
+    },
+    {
+        description: 'restore a session whose payment is paid when Suite goes online',
+        state: getStateWithInterruptedPayment({ ...PAYMENT_B, paidTxid: 'b2'.repeat(32) }),
+        client: asNetworkSymbol('btc'),
+        connect: [{ success: true }],
+        action: {
+            type: '@suite/online-status',
+            payload: true,
+        },
+        expectedActions: RESTORE_SESSION_B_ACTIONS,
     },
 ];
