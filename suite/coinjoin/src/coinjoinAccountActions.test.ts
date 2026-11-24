@@ -10,8 +10,15 @@ import { type TrezorDevice } from '@suite-common/suite-types';
 import { mockSuiteDevice } from '@suite-common/suite-types/mocks';
 import { createTestCompositionRoot, initPreloadedState, testMocks } from '@suite-common/test-utils';
 import { asNetworkSymbol } from '@suite-common/wallet-config';
-import { type AccountsState, prepareAccountsReducer } from '@suite-common/wallet-core';
+import {
+    type AccountsState,
+    type TransactionsState,
+    prepareAccountsReducer,
+    transactionsInitialState,
+} from '@suite-common/wallet-core';
 import { mockSetAccountAddMetadata } from '@suite-common/wallet-core/mocks';
+import { type Account } from '@suite-common/wallet-types';
+import { mockWalletAccount } from '@suite-common/wallet-types/mocks';
 import { mockActionType, mockReducer } from '@trezor/redux-utils/mocks';
 
 import * as fixtures from './__fixtures__/coinjoinAccountActions';
@@ -66,7 +73,7 @@ const rootReducer = combineReducers({
         }),
         selectedAccount: selectedAccountReducer,
         blockchain: () => ({ btc: { blockHeight: 150 } }),
-        transactions: () => ({ transactions: {} }),
+        transactions: () => transactionsInitialState,
     }),
 });
 
@@ -87,7 +94,7 @@ type State = {
         accounts: AccountsState;
         selectedAccount: SelectedAccountState;
         blockchain: { btc: { blockHeight: number } };
-        transactions: { transactions: Record<never, never> };
+        transactions: TransactionsState;
     };
 };
 type Wallet = Partial<State['wallet']> & { devices?: State['device']['devices'] };
@@ -128,6 +135,25 @@ describe('coinjoinAccountActions', () => {
             const actions = store.getActions();
             expect(actions.map(a => a.type)).toEqual(f.result.actions);
         });
+    });
+
+    // A scan that fails after it found transactions has already added them to the history and
+    // stored its checkpoint, so the next scan finds nothing new.
+    it('fetchAndUpdateAccount: updates an out-of-sync account whose scan finds nothing new', async () => {
+        const symbol = asNetworkSymbol('btc');
+        const account: Account = {
+            ...mockWalletAccount({ symbol, accountType: 'coinjoin' }),
+            backendType: 'coinjoin',
+            status: 'out-of-sync',
+        };
+        const store = initStore({
+            accounts: [account],
+            coinjoin: { accounts: [{ key: account.key, symbol: account.symbol }] },
+        } as Wallet);
+
+        await store.dispatch(coinjoinAccountActions.fetchAndUpdateAccountThunk(account));
+
+        expect(CoinjoinService.getInstance(symbol)?.backend.getAccountInfo).toHaveBeenCalled();
     });
 
     fixtures.startCoinjoinSession.forEach(f => {

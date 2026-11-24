@@ -467,8 +467,11 @@ export const fetchAndUpdateAccountThunk =
             // get fresh state
             const transactions = getState().wallet.transactions.transactions[account.key];
             const hasAnonymityError = selectHasAnonymitySetError(getState());
+            // A scan that failed after it found transactions has added them to the history but
+            // not to the balance and utxos, so an account that is not ready is always updated.
+            const isAccountInfoOutdated = account.status !== 'ready';
 
-            if (transactions !== prevTransactions || isInitialUpdate || hasAnonymityError) {
+            if (transactions !== prevTransactions || isAccountInfoOutdated || hasAnonymityError) {
                 const accountInfo = await backend.getAccountInfo(
                     account.descriptor,
                     transactions ?? [],
