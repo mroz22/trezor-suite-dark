@@ -93,7 +93,8 @@ trading catalog fix (2026-11-21) stops the Tokens tab and the asset detail heade
 from `exchange.trezor.io` where `selectIsRegionRestricted` hides trading, as the dashboard already does; Suite Dark
 needs it for "hide trading". The coordinator list (2026-11-21: the Status fix, the selector refactor and the feature)
 builds on the coinjoin commits, so offer it after them, in this order. The read-only recommended settings
-(2026-11-23) build on the coordinator list. The Status fix went upstream alone on
+(2026-11-23) build on the coordinator list. The range slider fix (2026-11-24) stands alone: the coinjoin setup
+sliders painted over the sticky account tabs when the page scrolled. The Status fix went upstream alone on
 2026-11-23, on plain `develop` and with only its own test; when upstream merges it, drop the fork commit by hand,
 because its test in the fork sits next to the round id test of an earlier coinjoin commit.
 
@@ -114,6 +115,7 @@ because its test in the fork sits next to the round id test of an earlier coinjo
 | `fix(coinjoin): never reuse output scripts after a failed round`            | fix      | none                                                       | not offered |
 | `fix(coinjoin): keep change of regular sends off burned coinjoin addresses` | fix      | none                                                       | not offered |
 | `fix(suite): skip the trading catalog request in restricted regions`        | fix      | none                                                       | not offered |
+| `fix(components): keep the range slider beneath sticky bars`                | fix      | none                                                       | not offered |
 | `fix(coinjoin): end rounds that disappear from the status`                  | fix      | [35387](https://github.com/trezor/trezor-suite/pull/35387) | open        |
 | `refactor(coinjoin): read the client settings through one selector`         | refactor | none                                                       | not offered |
 | `feat(coinjoin): choose the coinjoin coordinator from a list`               | feature  | none                                                       | not offered |
