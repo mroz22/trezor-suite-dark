@@ -138,7 +138,17 @@ export const coinjoinMiddleware =
         }
 
         // todo: startDiscovery is now fired under different context
-        if (isAnyOf(discoveryActions.startDiscovery, blockchainActions.synced)(action)) {
+        // A scan requested while the client loads is skipped, so the accounts are scanned again once
+        // it has loaded. Scans need the client only to analyze the result, so a client that failed
+        // to enable does not hold them back.
+        if (
+            isAnyOf(
+                discoveryActions.startDiscovery,
+                blockchainActions.synced,
+                coinjoinClientActions.clientEnableSuccess,
+                coinjoinClientActions.clientEnableFailed,
+            )(action)
+        ) {
             const state = api.getState();
             const symbol = discoveryActions.startDiscovery.match(action)
                 ? undefined

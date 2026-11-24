@@ -651,11 +651,16 @@ export const rescanCoinjoinAccountThunk =
         const account = selectAccountByKey(state, accountKey);
         if (account?.backendType !== 'coinjoin' || account.syncing) return;
         if (selectIsAnySessionInCriticalPhase(state)) return;
-        const api = await dispatch(coinjoinClientActions.initCoinjoinServiceThunk(account.symbol));
-        if (!api) return;
 
-        // lock
+        // Lock before the client loads, as a client that has loaded starts a scan of the account.
         dispatch(accountsActions.startCoinjoinAccountSync(account));
+
+        const api = await dispatch(coinjoinClientActions.initCoinjoinServiceThunk(account.symbol));
+        if (!api) {
+            dispatch(accountsActions.endCoinjoinAccountSync(account, account.status));
+
+            return;
+        }
 
         // clear txs
         dispatch(transactionsActions.resetTransaction({ account }));
