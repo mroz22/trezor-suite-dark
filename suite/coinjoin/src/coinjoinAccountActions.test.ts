@@ -2,6 +2,7 @@ import { combineReducers, createReducer } from '@reduxjs/toolkit';
 
 import { type SelectedAccountState, selectedAccountReducer } from '@suite/account';
 import { type LocksState, locksReducer } from '@suite/locks';
+import { type TorState, TorStatus, torReducer } from '@suite/tor';
 import { type DeviceReducerState } from '@suite-common/device';
 import { type MessageSystemState, prepareMessageSystemReducer } from '@suite-common/message-system';
 import { type NetworksState } from '@suite-common/networks';
@@ -64,6 +65,7 @@ const rootReducer = combineReducers({
         () => ({}),
     ),
     modal: () => ({}),
+    tor: torReducer,
     wallet: combineReducers({
         coinjoin: coinjoinReducer,
         accounts: prepareAccountsReducer({
@@ -89,6 +91,7 @@ type State = {
         buttonRequestsByPath: DeviceReducerState['buttonRequestsByPath'];
     };
     modal: Record<never, never>;
+    tor: TorState;
     wallet: {
         coinjoin: CoinjoinState;
         accounts: AccountsState;
@@ -97,15 +100,19 @@ type State = {
         transactions: TransactionsState;
     };
 };
-type Wallet = Partial<State['wallet']> & { devices?: State['device']['devices'] };
+type Wallet = Partial<State['wallet']> & {
+    devices?: State['device']['devices'];
+    torStatus?: TorStatus;
+};
 
-const initStore = ({ accounts, coinjoin, devices }: Wallet = {}) =>
+const initStore = ({ accounts, coinjoin, devices, torStatus }: Wallet = {}) =>
     createTestCompositionRoot<void, State>({
         reducer: rootReducer,
         preloadedState: initPreloadedState({
             rootReducer,
             partialState: {
                 ...(devices !== undefined ? { device: { devices } } : {}),
+                ...(torStatus !== undefined ? { tor: { torStatus } } : {}),
                 wallet: { accounts, coinjoin },
             },
         }),
@@ -257,6 +264,33 @@ describe('coinjoinAccountActions', () => {
             expect(authorizeCoinjoin).toHaveBeenCalledWith(
                 expect.objectContaining({ maxCoordinatorFeeRate: f.authorizedFeeRate }),
             );
+        });
+    });
+
+    describe('syncCoinjoinAccount', () => {
+        const symbol = asNetworkSymbol('btc');
+        const account: Account = {
+            ...mockWalletAccount({ symbol, accountType: 'coinjoin' }),
+            backendType: 'coinjoin',
+            status: 'out-of-sync',
+        };
+
+        it('scans the account', async () => {
+            const store = initStore({ accounts: [account], torStatus: TorStatus.Enabled });
+            const { backend } = await CoinjoinService.createInstance({ symbol });
+
+            await store.dispatch(coinjoinAccountActions.syncCoinjoinAccountThunk(account.key));
+
+            expect(backend.scanAccount).toHaveBeenCalled();
+        });
+
+        it('does not scan the account without Tor', async () => {
+            const store = initStore({ accounts: [account], torStatus: TorStatus.Disabled });
+            const { backend } = await CoinjoinService.createInstance({ symbol });
+
+            await store.dispatch(coinjoinAccountActions.syncCoinjoinAccountThunk(account.key));
+
+            expect(backend.scanAccount).not.toHaveBeenCalled();
         });
     });
 });

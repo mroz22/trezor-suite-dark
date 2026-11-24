@@ -116,10 +116,6 @@ export const messages = defineMessages({
         defaultMessage: "Revoke this vault's approved spending limit for your {displaySymbol}.",
         id: 'TR_EARN_YIELD_REVOKE_TOKEN_SPENDING_DESCRIPTION',
     },
-    TR_ACCOUNT_OUT_OF_SYNC: {
-        defaultMessage: 'Account sync in progress.',
-        id: 'TR_ACCOUNT_OUT_OF_SYNC',
-    },
     TR_ACCOUNT_IMPORTED_ANNOUNCEMENT: {
         defaultMessage:
             "A watch-only account is a public address you've imported into your wallet, allowing the wallet to watch for outputs but not spend them.",
@@ -5080,9 +5076,9 @@ export const messages = defineMessages({
         id: 'TR_UNAVAILABLE_COINJOIN_DEVICE_DISCONNECTED',
         defaultMessage: 'Unavailable. Associated device is disconnected.',
     },
-    TR_UNAVAILABLE_COINJOIN_ACCOUNT_OUT_OF_SYNC: {
-        id: 'TR_UNAVAILABLE_COINJOIN_ACCOUNT_OUT_OF_SYNC',
-        defaultMessage: 'Unavailable. Account sync in progress.',
+    TR_UNAVAILABLE_COINJOIN_ACCOUNT_NOT_SYNCED: {
+        id: 'TR_UNAVAILABLE_COINJOIN_ACCOUNT_NOT_SYNCED',
+        defaultMessage: 'Unavailable. The account is not synced yet.',
     },
     TR_UNAVAILABLE_COINJOIN_NO_INTERNET: {
         id: 'TR_UNAVAILABLE_COINJOIN_NO_INTERNET',
@@ -10092,6 +10088,29 @@ export const messages = defineMessages({
         id: 'TR_COINJOIN_DISCOVERY_TITLE',
         description: 'Heading of the Privacy account discovery loader',
         defaultMessage: 'Loading your Privacy account',
+    },
+    TR_COINJOIN_ACCOUNT_SYNCING: {
+        id: 'TR_COINJOIN_ACCOUNT_SYNCING',
+        description:
+            'Title of the banner shown while a Privacy account that was loaded before catches up',
+        defaultMessage: 'Syncing your Privacy account',
+    },
+    TR_COINJOIN_ACCOUNT_OUTDATED: {
+        id: 'TR_COINJOIN_ACCOUNT_OUTDATED',
+        description: 'Banner of a Privacy account that is not synced and not syncing right now',
+        defaultMessage: 'The balance may be out of date. The account syncs automatically.',
+    },
+    TR_COINJOIN_ACCOUNT_OUTDATED_UNTIL_ROUND_ENDS: {
+        id: 'TR_COINJOIN_ACCOUNT_OUTDATED_UNTIL_ROUND_ENDS',
+        description:
+            'Banner of a Privacy account that is not synced while a coinjoin round blocks syncing',
+        defaultMessage:
+            'The balance may be out of date. The account syncs when the current coinjoin round ends.',
+    },
+    TR_COINJOIN_ACCOUNT_SYNC_NOW: {
+        id: 'TR_COINJOIN_ACCOUNT_SYNC_NOW',
+        description: 'Button that syncs a Privacy account right away',
+        defaultMessage: 'Sync now',
     },
     TR_COINJOIN_DISCOVERY_CAPTION_BLOCKS_LOCAL: {
         id: 'TR_COINJOIN_DISCOVERY_CAPTION_BLOCKS_LOCAL',
