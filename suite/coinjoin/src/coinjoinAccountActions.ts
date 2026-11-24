@@ -4,7 +4,7 @@ import { type SelectedAccountRootState } from '@suite/account';
 import { type LocksRootState, selectIsDeviceLocked } from '@suite/locks';
 import { type ModalRootState, openModal } from '@suite/modal';
 import { type RouterRootState, gotoThunk, selectRouteName } from '@suite/router';
-import { type TorRootState } from '@suite/tor';
+import { type TorRootState, selectIsTorEnabled } from '@suite/tor';
 import { type DeviceRootState, selectDevices, selectSelectedDevice } from '@suite-common/device';
 import { type MessageSystemRootState } from '@suite-common/message-system';
 import { type NetworksRootState, selectSupportedNetworkSymbols } from '@suite-common/networks';
@@ -523,6 +523,20 @@ export const fetchAndUpdateAccountThunk =
         } finally {
             backend.off(`progress/${progressHandle}`, onProgress);
         }
+    };
+
+type SyncCoinjoinAccountThunkState = AccountsRootState &
+    FetchAndUpdateAccountThunkState &
+    TorRootState;
+
+// Scans of Privacy accounts run over Tor only, like the scans the coinjoin middleware starts.
+export const syncCoinjoinAccountThunk =
+    (accountKey: AccountKey) =>
+    async (dispatch: Dispatch, getState: () => SyncCoinjoinAccountThunkState) => {
+        const account = selectAccountByKey(getState(), accountKey);
+        if (!account || !selectIsTorEnabled(getState())) return;
+
+        await dispatch(fetchAndUpdateAccountThunk(account));
     };
 
 type ClearCoinjoinInstancesThunkState = CoinjoinRootState;

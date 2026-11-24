@@ -38,7 +38,7 @@ export const useCoinjoinSessionBlockers = (
             case 'DEVICE_DISCONNECTED':
                 return translationString('TR_UNAVAILABLE_COINJOIN_DEVICE_DISCONNECTED');
             case 'ACCOUNT_OUT_OF_SYNC':
-                return translationString('TR_UNAVAILABLE_COINJOIN_ACCOUNT_OUT_OF_SYNC');
+                return translationString('TR_UNAVAILABLE_COINJOIN_ACCOUNT_NOT_SYNCED');
             case 'ANONYMITY_ERROR':
                 return translationString('TR_UNAVAILABLE_COINJOIN_NO_ANONYMITY_SET');
             default:

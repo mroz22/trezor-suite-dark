@@ -13,7 +13,7 @@ import { Column } from '@trezor/components';
 import { useSelector } from '#src/hooks/suite/useSelector';
 
 import { AccountImported } from './AccountImported';
-import { AccountOutOfSync } from './AccountOutOfSync';
+import { AccountOutOfSync } from './AccountOutOfSync/AccountOutOfSync';
 import { BackendDisconnected } from './BackendDisconnected';
 import { CardanoLegacyBanner } from './CardanoLegacyBanner';
 import { DeviceUnavailable } from './DeviceUnavailable';
