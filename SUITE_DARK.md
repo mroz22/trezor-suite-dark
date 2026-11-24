@@ -73,7 +73,9 @@ Upstream pull requests of the upstream-bound commits on `main`. Their state is r
 `gh pr view <n> --repo trezor/trezor-suite`; a sync drops a merged commit together with its line. Suite Dark
 needs the trading catalog fix for "hide trading". The coinjoin commits (2026-11-21, defences of the client against a
 malicious coordinator) are a stack: each applies to plain `develop` together with the coinjoin commits listed above
-it, so offer them upstream in this order.
+it, so offer them upstream in this order. The coordinator list (2026-11-21: the selector refactor and the feature)
+builds on the coinjoin commits, so offer it after them, in this order. The read-only recommended settings
+(2026-11-23) build on the coordinator list.
 
 - `fix(suite): skip the trading catalog request in restricted regions`: not offered
 - `fix(suite): run the 26.12.0.1 storage migration on databases at 26.12.0`: not offered
@@ -88,6 +90,9 @@ it, so offer them upstream in this order.
 - `fix(coinjoin): stop mixing when the coordinator lies`: not offered
 - `fix(coinjoin): never reuse output scripts after a failed round`: not offered
 - `fix(coinjoin): keep change of regular sends off burned coinjoin addresses`: not offered
+- `refactor(coinjoin): read the client settings through one selector`: not offered
+- `feat(coinjoin): choose the coinjoin coordinator from a list`: not offered
+- `feat(coinjoin): show the recommended coinjoin settings read-only`: not offered
 
 ## Development branches
 
@@ -155,11 +160,19 @@ Ask the owner before reversing any of these.
   SatoshiLabs copyright and author. `process.env.VERSION` has no suffix, because it is sent in the backend User-Agent.
 - Coinjoin: upstream Privacy accounts plus the kruw.io default coordinator (tested by the owner), with the
   client-side defences against a malicious coordinator listed under Upstream first (2026-11-21): a coordinator fee
-  cap of 0.1 % for any coordinator, at least 21 inputs on mainnet (2 on test networks), no solo coinjoins, checks of
+  cap of 0.1 % for any coordinator and none for the listed ones (kruw and OpenCoordinator), at least 21 inputs on
+  mainnet (2 on test networks), no solo coinjoins, checks of
   the round id, of the ownership proofs and inputs of other participants, of own inputs and outputs and of blame
   rounds, output scripts never reused after a failed round except in its blame rounds, outputs only on change
   addresses up to the last used one plus 20 (the discovery lookout of 50 stays), and mixing stops with an error
   message when the coordinator provably lies. Coordinators older than WalletWasabi 2.3.0 lose their blame rounds.
+  Users choose the coordinator from the list in the build, in a Privacy account's Coinjoin setup, one choice per
+  network for all its Privacy accounts, and the choice is kept (2026-11-21). The Coinjoin setup always shows its
+  settings, the coordinator included: Recommended shows the values a session uses, read-only, and keeps the
+  network's coordinator choice; Custom makes them editable (2026-11-23). No automatic switch to another coordinator,
+  no detection of a coordinator that stops responding while Suite runs (only the check when the client starts, the
+  rest goes to the log) and no custom coordinator address for now. Which coordinators the list names is the owner's
+  decision; OpenCoordinator was added on 2026-11-22. Suite Dark contacts it only once the user chooses it.
 - Password manager: upstream's Dropbox-based experimental feature, only renamed. Upstream does not save the
   experimental toggle (`packages/suite/src/actions/suite/storageActions.ts`), so it is off after every restart.
 - Minimal diff: prefer a default, flag or render site over editing many upstream lines; put fork-only values in
@@ -212,6 +225,8 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
 - The coinjoin defences are covered by unit tests only and have not run against kruw yet. In the first session,
   watch the coinjoin log for skipped rounds (`Skipping round`, a round id that does not match its parameters, a min
   input count below 21) and for refused ownership proofs; any of them on every round means a check refuses kruw.
+- OpenCoordinator was only checked through its status on 2026-11-22 and has not mixed with Suite Dark, and changing
+  the coordinator in the Coinjoin setup (`CoinjoinService.replaceClient`) has not run in the desktop app yet.
 
 ## Working here
 
@@ -290,7 +305,8 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   checked in the commit body.
 - Tests that encode fork behaviour: `suite-common/message-system/src/messageSystemActions.test.ts` sets
   `configSource: 'remote'`; `packages/suite/src/middlewares/onboarding/onboardingMiddleware.test.ts` keeps analytics
-  unconfirmed; `suite/coinjoin/src/config.test.ts` expects the kruw coordinator;
+  unconfirmed; `suite/coinjoin/src/config.test.ts` expects the btc list kruw then OpenCoordinator, both with no
+  coordinator fee and no backend;
   `packages/suite/mocks/mockInitialAppState.ts` keeps the light theme for upstream tests;
   `suite-common/assets/src/homeAssetTableFeedbackThunks.test.ts` expects that nothing is sent. The two device-connect
   eShop tests in `suite/flags/src/flagsSlice.test.ts` now pass trivially. `suite/regions/src/regionsSelectors.test.ts`
