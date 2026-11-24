@@ -75,7 +75,11 @@ needs the trading catalog fix for "hide trading". The coinjoin commits (2026-11-
 malicious coordinator) are a stack: each applies to plain `develop` together with the coinjoin commits listed above
 it, so offer them upstream in this order. The coordinator list (2026-11-21: the selector refactor and the feature)
 builds on the coinjoin commits, so offer it after them, in this order. The read-only recommended settings
-(2026-11-23) build on the coordinator list.
+(2026-11-23) build on the coordinator list. The Privacy account sync (2026-11-24) is a stack of three fixes and a
+feature that applies to plain `develop` in this order: navigation outside the wallet no longer cancels scans, a
+failed scan no longer leaves a stale balance, the accounts are scanned once their coinjoin client has loaded, and
+one banner replaces the discovery loader of an account that was discovered before. The banner needs the third fix,
+because it shows a loading client as a sync that is about to start.
 
 - `fix(suite): skip the trading catalog request in restricted regions`: not offered
 - `fix(suite): run the 26.12.0.1 storage migration on databases at 26.12.0`: not offered
@@ -93,6 +97,10 @@ builds on the coinjoin commits, so offer it after them, in this order. The read-
 - `refactor(coinjoin): read the client settings through one selector`: not offered
 - `feat(coinjoin): choose the coinjoin coordinator from a list`: not offered
 - `feat(coinjoin): show the recommended coinjoin settings read-only`: not offered
+- `fix(coinjoin): keep scanning Privacy accounts outside the wallet`: not offered
+- `fix(coinjoin): update the balance of a Privacy account after a failed scan`: not offered
+- `fix(coinjoin): scan Privacy accounts once their coinjoin client has loaded`: not offered
+- `feat(suite): show the sync of a Privacy account in one banner`: not offered
 
 ## Development branches
 
