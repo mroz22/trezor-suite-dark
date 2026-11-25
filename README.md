@@ -5,8 +5,9 @@ sends no telemetry and no feedback, uses only the message-system configuration b
 banners and no trading, starts with Tor and discreet mode on and mixes coins through a public coinjoin coordinator,
 checking that the coordinator does not cheat. It is not a SatoshiLabs product; Trezor Support does not cover it.
 
-What the fork changes, how to set it up and how to work on it is in [SUITE_DARK.md](SUITE_DARK.md). Everything
-below is the upstream Trezor Suite readme; clone `mroz22/trezor-suite-dark` instead of `trezor/trezor-suite`.
+The decisions behind the fork, how to set it up and how to work on it are in [SUITE_DARK.md](SUITE_DARK.md); each
+fork commit's message says what it changes. Everything below is the upstream Trezor Suite readme; clone
+`mroz22/trezor-suite-dark` instead of `trezor/trezor-suite`.
 
 # TREZOR SUITE MONOREPO
 

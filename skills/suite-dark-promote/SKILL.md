@@ -10,9 +10,13 @@ Rules: `SUITE_DARK.md` (Development branches; Upstream first, the order on `main
 
 ## When to use
 
-The owner names commits on `staging` for `main`: SHAs, subjects, a feature, or "the fixups that target main". Never
-choose them yourself and never start without that request. A named feature not yet on `staging`: land it with
-suite-dark-branches step 4 (its own go), wait for staging's CI, then pick its commits. Syncs are `suite-dark-sync`.
+The owner names commits on `staging` for `main`: SHAs, subjects, a feature, or "the fixups that target main", which are
+the `fixup!`/`amend!` commits whose change concerns only work already on `main` (from a docs fixup that also covers work
+only on `staging`, only its text about work on `main`, split as in step 3). List separately, unpicked, every marker
+whose closure would add a non-marker commit, such as an `amend!` of a flavour commit that needs a `staging` feature.
+Never choose picks yourself and never start without that request. A named feature not yet on `staging` has not been in
+daily use (SUITE_DARK.md, Development branches): say so and stop; it lands through its pull request first. Syncs are
+`suite-dark-sync`.
 
 ## Preconditions
 
@@ -26,18 +30,24 @@ with `--no-verify` (step 5 checks formatting). Docs files are the docs commit's:
 2. `git fetch --prune origin && git fetch upstream develop`, then
    `skills/suite-dark-branches/scripts/series-check.sh --main origin/main origin/develop origin/staging origin/<f>`
    for each `<f>` in `git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/feature/`. A local branch
-   equal to or behind its origin ref is fine; local commits origin lacks: stop, ask. `MISSING`, `NESTED` and
+   equal to or behind its origin ref is fine; local commits origin lacks: stop, ask, except on a feature branch whose
+   session is running (SUITE_DARK.md, Development branches), which stays out and is reported. `MISSING`, `NESTED` and
    `UNFOLDED` lines are handled in steps 3-4; an `UPSTREAM-*` pick waits for a sync.
-3. `develop` is `main`'s base, else stop (a sync is due, or `git fetch origin develop:develop` moves a stale one):
+3. `develop` is `main`'s base:
    `git merge-base --is-ancestor develop origin/main && [ "$(git merge-base origin/main upstream/develop)" = "$(git rev-parse develop)" ]`.
-4. CI is green on the current `staging`, otherwise stop and report:
-   `gh run list --repo mroz22/trezor-suite-dark --branch staging --limit 1 --json headSha,conclusion`.
+   Otherwise stop: a `develop` ahead of `origin/develop` comes from an aborted sync, so a sync is due (ask); one
+   behind it moves with `git fetch origin develop:develop`.
+4. CI passed on the current `staging` commit, otherwise stop and report; no run yet: wait and retry.
+   `gh run list --repo mroz22/trezor-suite-dark --branch staging --commit <git rev-parse origin/staging> --json status,conclusion`
+   must show `completed` and `success`.
 
 ## Steps
 
 1. **Backups and candidate.** The backups are the old bases and lease pins; `promote/main` tells other sessions a
-   promotion is running. If a name exists, stop and ask. Below, `<M>` is `backup/main-pre-promote-<d>` and `<S>` is
-   `backup/staging-pre-promote-<d>`.
+   promotion is running. If `promote/main` exists, stop and ask; if a backup name exists (a second operation that
+   day), `<d>` is `yyyymmdd-2` (then `-3`) from here on, in every name of this skill, `<M>` and `<S>` included. Back
+   up every feature branch step 8 will rebase, not one whose session is running. Below, `<M>` is
+   `backup/main-pre-promote-<d>` and `<S>` is `backup/staging-pre-promote-<d>`.
 
     ```bash
     ok=1; for b in main staging feature/<name>; do git branch "backup/$b-pre-promote-<d>" "origin/$b" || { ok=0; break; }; done
@@ -69,8 +79,9 @@ with `--no-verify` (step 5 checks formatting). Docs files are the docs commit's:
 
 3. **Build `promote/main`** in the order of `SUITE_DARK.md`, Upstream first: picked upstream-bound commits after
    main's, fixes before refactors before features where they do not depend on each other, else in `staging`'s order;
-   picked flavour commits after main's. `<U>` is the newest upstream-bound commit on `main`, or the docs commit if
-   there is none: `git log -1 --format=%h -E --grep='^Upstream: (fix|refactor|feature)$' develop..<M>`.
+   picked flavour commits after main's. `<U>` is the newest upstream-bound commit on `main`,
+   `git log -1 --format=%h -E --grep='^Upstream: (fix|refactor|feature)$' develop..<M>`; if that prints nothing, the
+   docs commit, `git rev-list --reverse develop..<M> | head -1`.
 
     ```bash
     GIT_LFS_SKIP_SMUDGE=1 git switch -q promote/main
@@ -81,6 +92,10 @@ with `--no-verify` (step 5 checks formatting). Docs files are the docs commit's:
     GIT_SEQUENCE_EDITOR=: GIT_LFS_SKIP_SMUDGE=1 git rebase -q -i --autosquash develop   # plain --autosquash folds nothing
     ```
 
+    - A picked `amend!` that removes its target's `Upstream:` trailer (a declined commit made flavour) moves that
+      target: keep `<U>` as defined above, leave the target out of `develop..<U>` (list the other commits) and
+      cherry-pick it right after the picked upstream-bound commits, before `<U>..<M>`; its `amend!` comes with the
+      picked markers.
     - `--allow-empty` keeps a message-only `amend!`; never `--skip` a stop on one. Pick a `MISSING` or `NESTED`
       marker alone and retarget it right after (suite-dark-branches step 3.3). `UNFOLDED` markers fold here; one that
       names no commit on `main` is picked alone and retargeted the same way.
@@ -92,9 +107,13 @@ with `--no-verify` (step 5 checks formatting). Docs files are the docs commit's:
 
 4. **Rebuild `promote/staging`** on the new `main` with the old staging's tree. A conflict in a non-docs commit means
    the closure is incomplete: `git cherry-pick --abort`, back to step 2. Pick alone and retarget (step 3) every
-   `MISSING` or `NESTED` marker and every marker naming a subject a picked `amend!` renamed. Then the docs: A keeps the
-   remaining docs fixups when each covers one unpicked feature; if they are mixed or conflict (`--abort`), B restores
-   them as one.
+   `MISSING` or `NESTED` marker and every marker naming a subject a picked `amend!` renamed. Then the docs, in
+   `staging`'s order. A: in place of each fixup split in step 3, its unpicked rest:
+   `git checkout <sha> -- <docs files>` restores the full text when every docs fixup before it is already in
+   (today's main plus the picked part) and no docs fixup after it in `staging`'s order reached `main`, whole or in
+   part; then `git commit --no-verify` with the subject `fixup! flavour: document the fork for contributors and agents`
+   and a body naming the unpicked work. Every other docs fixup is cherry-picked as it is. If a later fixup reached
+   `main`, a cherry-pick conflicts (`--abort`) or `same-tree` does not print, B restores them as one.
 
     ```bash
     GIT_LFS_SKIP_SMUDGE=1 git switch -q -c promote/staging promote/main
@@ -102,7 +121,7 @@ with `--no-verify` (step 5 checks formatting). Docs files are the docs commit's:
     git cherry-pick --allow-empty <remaining docs fixups>   # A
     git diff --name-only HEAD <S>                           # B: must list docs files only
     git checkout <S> -- <those files>
-    git commit --no-verify -m 'fixup! flavour: document the fork for contributors and agents'
+    git commit --no-verify -m 'fixup! flavour: document the fork for contributors and agents' -m '<the unpicked work>'
     git diff --quiet <S> promote/staging && echo same-tree   # must print it
     ```
 
@@ -139,9 +158,16 @@ with `--no-verify` (step 5 checks formatting). Docs files are the docs commit's:
     ```
 
 8. **After the push**, with suite-dark-branches: move `main`, `staging` and their checkouts (step 6). Rebase each
-   feature branch onto `staging` (step 5, old base `git merge-base <S> origin/feature/<name>`; gate 5). A feature with
-   nothing of its own (`git log --oneline <S>..origin/feature/<name>` is empty) is not rebased: ask whether to delete
-   it on origin and locally. Delete `promote/*`, return to your branch, note the CI runs on `main` and `staging`.
+   feature branch onto `staging` (step 5, old base `git merge-base <S> origin/feature/<name>`; gate 5), except one
+   whose session is running: report it as lagging, with that old base, and if it has an open pull request
+   (`gh pr list --repo mroz22/trezor-suite-dark --head feature/<name> --state open`), tell the owner not to merge it
+   before its agent has rebased it. A feature with nothing of its own
+   (`git cherry <S> origin/feature/<name>` prints no `+` line) is not rebased: ask whether to delete it on origin and
+   locally. Compare the website (`git show origin/gh-pages:index.html`) with the new `main` and propose any change
+   to the owner (SUITE_DARK.md, Website). Delete `promote/*`, return to your branch, note the CI runs on `main` and
+   `staging`.
+
+**Abort** before the push: delete `promote/*` and, once their runs finished, `ci/promote-*`; keep the backups.
 
 ## Gates
 
@@ -150,7 +176,8 @@ with `--no-verify` (step 5 checks formatting). Docs files are the docs commit's:
 3. Docs text on `main` beyond the picked work's existing text needs the owner's agreement.
 4. One go for the atomic push of step 7, with the exact command shown first; a catch-up after it needs a new go.
 5. One go per feature-branch force-push, with the exact command shown first.
-6. List the older `backup/*` branches (all but the newest per branch) and ask once whether to delete them.
+6. List the older `backup/*` branches that SUITE_DARK.md (Development branches) does not keep and ask once whether to
+   delete them.
 
 No go needed (standing permissions in `AGENTS.md`): pushing and deleting `ci/promote-main`, and moving the owner's
 checkout as in suite-dark-branches step 6 after the approved push.
