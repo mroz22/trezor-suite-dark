@@ -85,6 +85,9 @@ it, so offer them upstream in this order.
 - `fix(coinjoin): verify other participants' ownership proofs`: not offered
 - `fix(coinjoin): check blame round inputs against the failed round`: not offered
 - `fix(coinjoin): verify round id against round parameters`: not offered
+- `fix(coinjoin): stop mixing when the coordinator lies`: not offered
+- `fix(coinjoin): never reuse output scripts after a failed round`: not offered
+- `fix(coinjoin): keep change of regular sends off burned coinjoin addresses`: not offered
 
 ## Development branches
 
@@ -154,7 +157,9 @@ Ask the owner before reversing any of these.
   client-side defences against a malicious coordinator listed under Upstream first (2026-11-21): a coordinator fee
   cap of 0.1 % for any coordinator, at least 21 inputs on mainnet (2 on test networks), no solo coinjoins, checks of
   the round id, of the ownership proofs and inputs of other participants, of own inputs and outputs and of blame
-  rounds. Coordinators older than WalletWasabi 2.3.0 lose their blame rounds.
+  rounds, output scripts never reused after a failed round except in its blame rounds, outputs only on change
+  addresses up to the last used one plus 20 (the discovery lookout of 50 stays), and mixing stops with an error
+  message when the coordinator provably lies. Coordinators older than WalletWasabi 2.3.0 lose their blame rounds.
 - Password manager: upstream's Dropbox-based experimental feature, only renamed. Upstream does not save the
   experimental toggle (`packages/suite/src/actions/suite/storageActions.ts`), so it is off after every restart.
 - Minimal diff: prefer a default, flag or render site over editing many upstream lines; put fork-only values in
