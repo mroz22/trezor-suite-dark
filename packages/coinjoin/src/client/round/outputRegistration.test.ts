@@ -2,9 +2,11 @@ import { networks } from '@trezor/utxo-lib';
 
 import { outputDecomposition } from './outputDecomposition';
 import { outputRegistration } from './outputRegistration';
-import { createServer } from '../../../mocks/server';
+import { createServer, getRoundCredentialKinds, resetMockCoordinator } from '../../../mocks/server';
+import { mintCredentials } from '../../__fixtures__/credentialIssuer.fixture';
 import { createInput } from '../../__fixtures__/input.fixture';
 import {
+    DEFAULT_ROUND,
     ROUND_CREATION_EVENT,
     createCoinjoinRound,
     createInputAddedEvent,
@@ -47,6 +49,10 @@ const createCoinjoinState = (registeredOutpoints: string[]) => ({
     Events: [ROUND_CREATION_EVENT, ...registeredOutpoints.map(createInputAddedEvent)],
 });
 
+// The cases run the real credential crypto against the mock coordinator's issuer, which takes
+// seconds on a loaded CI runner.
+jest.setTimeout(60_000);
+
 describe('outputRegistration', () => {
     let server: Awaited<ReturnType<typeof createServer>>;
 
@@ -57,6 +63,10 @@ describe('outputRegistration', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         server?.removeAllListeners('test-request');
+    });
+
+    afterEach(() => {
+        resetMockCoordinator();
     });
 
     afterAll(() => {
@@ -148,6 +158,17 @@ describe('outputRegistration', () => {
         expect(firstInput2.error?.message).toMatch(/No change address available/);
     });
 
+    // Credentials of an output, minted by the mock coordinator's issuer, which verifies them
+    // again when the output is registered. A made-up credential has no valid MAC.
+    const mintOutputCredentials = async (amount: number) => {
+        const kinds = getRoundCredentialKinds(DEFAULT_ROUND.Id);
+
+        return {
+            amountCredentials: await mintCredentials(kinds.amount, [amount, 0]),
+            vsizeCredentials: await mintCredentials(kinds.vsize, [43, 0]),
+        };
+    };
+
     describe('change addresses', () => {
         const createChangeAddress = (address: string, index: number): AccountAddress => ({
             path: `m/10025'/1'/0'/1'/1/${index}`,
@@ -175,19 +196,13 @@ describe('outputRegistration', () => {
 
         // A round of the own and another input in output registration, in which the account
         // registers one output.
-        const createRound = (BlameOf = '0'.repeat(64)) => {
+        const createRound = async (BlameOf = '0'.repeat(64)) => {
+            const credentials = await mintOutputCredentials(100000);
             (outputDecomposition as jest.Mock).mockImplementationOnce(() =>
                 Promise.resolve([
                     {
                         accountKey: 'account-A',
-                        outputs: [
-                            {
-                                accountKey: 'account-A',
-                                amount: 100000,
-                                amountCredentials: [{ Value: 100000 }, { Value: 0 }],
-                                vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
-                            },
-                        ],
+                        outputs: [{ accountKey: 'account-A', amount: 100000, ...credentials }],
                     },
                 ]),
             );
@@ -207,7 +222,7 @@ describe('outputRegistration', () => {
         };
 
         it('are detained for good before the request, also if it fails', async () => {
-            const round = createRound();
+            const round = await createRound();
             const registeredOutput = {
                 errorCode: 'registeredOutput',
                 roundId: round.id,
@@ -246,7 +261,7 @@ describe('outputRegistration', () => {
                     if (url.endsWith('/output-registration')) scripts.push(data.Script);
                     resolve();
                 });
-                const round = createRound(BlameOf);
+                const round = await createRound(BlameOf);
                 // Registered by the account in another failed round and in the failed round.
                 round.prison.detainRegisteredOutput(
                     { accountKey: 'account-A', address: FIRST.address },
@@ -283,7 +298,7 @@ describe('outputRegistration', () => {
                 }
                 resolve();
             });
-            const round = createRound();
+            const round = await createRound();
 
             const response = await outputRegistration(round, [ACCOUNT], server?.requestOptions);
 
@@ -341,10 +356,10 @@ describe('outputRegistration', () => {
             resolve();
         });
 
-        // The coordinator announces the own input with amount 1.
+        // The coordinator announces the own input with 1_000_000 sat (createInputAddedEvent).
         const ownInput = createInput('account-A', OWN_OUTPOINT, {
             amount: 2,
-            confirmedAmountCredentials: [{ Value: 2 }],
+            confirmedAmountCredentials: [{ value: 2 }],
         });
         const response = await outputRegistration(
             createCoinjoinRound([ownInput], {
@@ -473,18 +488,12 @@ describe('outputRegistration', () => {
     ])(
         'expects an output at %i sat/kvB to get its credentials minus %i sat',
         async (MiningFeeRate, outputFee) => {
+            const credentials = await mintOutputCredentials(100000);
             (outputDecomposition as jest.Mock).mockImplementationOnce(() =>
                 Promise.resolve([
                     {
                         accountKey: 'account-A',
-                        outputs: [
-                            {
-                                accountKey: 'account-A',
-                                amount: 100000,
-                                amountCredentials: [{ Value: 100000 }, { Value: 0 }],
-                                vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
-                            },
-                        ],
+                        outputs: [{ accountKey: 'account-A', amount: 100000, ...credentials }],
                     },
                 ]),
             );
@@ -559,16 +568,17 @@ describe('outputRegistration', () => {
             if (url.endsWith('/ready-to-sign')) readyToSign.push(data.AliceId);
             resolve();
         });
-        const createOutput = (accountKey: string, amount: number) => ({
+        const createOutput = async (accountKey: string, amount: number) => ({
             accountKey,
             amount,
-            amountCredentials: [{ Value: amount }, { Value: 0 }],
-            vsizeCredentials: [{ Value: 43 }, { Value: 0 }],
+            ...(await mintOutputCredentials(amount)),
         });
+        const outputA = await createOutput('account-A', 100000);
+        const outputB = await createOutput('account-B', 50000);
         (outputDecomposition as jest.Mock).mockImplementationOnce(() =>
             Promise.resolve([
-                { accountKey: 'account-A', outputs: [createOutput('account-A', 100000)] },
-                { accountKey: 'account-B', outputs: [createOutput('account-B', 50000)] },
+                { accountKey: 'account-A', outputs: [outputA] },
+                { accountKey: 'account-B', outputs: [outputB] },
             ]),
         );
         const setSessionPhase = jest.fn();
@@ -628,4 +638,82 @@ describe('outputRegistration', () => {
             accountKeys: ['account-B'],
         });
     });
+
+    /**
+     * Output registration is the one phase whose credential request presents credentials
+     * and asks for nothing back, so it is the only place where the issuer checks a
+     * presentation-only balance proof. The credentials here are minted from the mock
+     * coordinator's own issuer, which then has to accept them: if it did not, the mock
+     * answers 500 and the input ends up with an error instead of being readied to sign.
+     */
+    it('registers an output with credentials the issuer accepts', async () => {
+        const kinds = getRoundCredentialKinds(DEFAULT_ROUND.Id);
+        const amountCredentials = await mintCredentials(kinds.amount, [2000, 0]);
+        const vsizeCredentials = await mintCredentials(kinds.vsize, [43, 0]);
+
+        (outputDecomposition as jest.Mock).mockImplementation(() =>
+            Promise.resolve([
+                {
+                    accountKey: 'account-A',
+                    outputs: [
+                        {
+                            accountKey: 'account-A',
+                            amount: 2000,
+                            amountCredentials,
+                            vsizeCredentials,
+                        },
+                    ],
+                },
+            ]),
+        );
+
+        const urls: string[] = [];
+        server?.addListener('test-request', ({ url, resolve }) => {
+            urls.push(url);
+            resolve();
+        });
+
+        const response = await outputRegistration(
+            createCoinjoinRound(
+                [
+                    createInput('account-A', OWN_OUTPOINT, {
+                        registrationData: { AliceId: '01A1-01a1' },
+                    }),
+                ],
+                {
+                    ...server?.requestOptions,
+                    round: {
+                        phase: 3,
+                        coinjoinState: createCoinjoinState([OWN_OUTPOINT, OTHER_OUTPOINT]),
+                    },
+                },
+            ),
+            [
+                {
+                    accountKey: 'account-A',
+                    scriptType: 'Taproot',
+                    changeAddresses: [
+                        {
+                            address:
+                                'tb1p55k3nua65qqqsq7j9zn8xp6rn3ntht9gj2ww3zfstczytd07htts3txmh9',
+                            scriptPubKey: getScriptPubKeyFromAddress(
+                                'tb1p55k3nua65qqqsq7j9zn8xp6rn3ntht9gj2ww3zfstczytd07htts3txmh9',
+                                networks.testnet,
+                                'Taproot',
+                            ),
+                        },
+                    ],
+                } as any, // partial Account
+            ],
+            server?.requestOptions,
+        );
+
+        const { inputs } = response;
+        // @ts-expect-error: indexing with noUncheckedIndexedAccess
+        const firstInput: (typeof inputs)[number] = inputs[0];
+        expect(firstInput.error).toBeUndefined();
+        expect(urls).toContain('/output-registration');
+        expect(urls).toContain('/ready-to-sign');
+        expect(response.addresses).toHaveLength(1);
+    }, 60_000);
 });

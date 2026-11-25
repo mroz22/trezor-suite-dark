@@ -13,6 +13,36 @@ import {
 import * as CONSTANTS from '../constants';
 import { EndRoundState, RoundPhase, WabiSabiProtocolErrorCode } from '../enums';
 
+/**
+ * This suite is about phase-change locking and the cool-off window, and it races fixed
+ * timeouts against the work a phase does. The credential layer is stubbed so that those
+ * timings measure the locking and not a few thousand secp256k1 multiplications; the real
+ * credential round trip lives in `round/inputRegistration.test.ts` and
+ * `round/credentialRoundTrip.test.ts`.
+ */
+jest.mock('./credentials', () => {
+    const credentialsBundle = {
+        // The marker the mock coordinator recognises, so that it answers with the right
+        // shape instead of handing a proofless request to its issuer.
+        CredentialsRequest: jest.requireActual('../../mocks/stubbedCredentials')
+            .STUBBED_CREDENTIALS_REQUEST,
+        CredentialsResponseValidation: {},
+    };
+
+    return {
+        ...jest.requireActual('./credentials'),
+        getZeroCredentials: jest.fn(() => credentialsBundle),
+        getRealCredentials: jest.fn(() => Promise.resolve(credentialsBundle)),
+        getCredentials: jest.fn(() => [{ value: 0 }, { value: 0 }]),
+    };
+});
+
+// The decomposer reads the values of the stubbed credentials, so it is stubbed too.
+jest.mock('@trezor/coinjoin-strategy', () => ({
+    ...jest.requireActual('@trezor/coinjoin-strategy'),
+    getOutputAmounts: jest.fn(() => [5000]),
+}));
+
 // mock random delay function
 jest.mock('@trezor/utils', () => {
     const originalModule = jest.requireActual('@trezor/utils');

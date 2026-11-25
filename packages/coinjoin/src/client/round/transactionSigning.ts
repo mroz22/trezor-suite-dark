@@ -1,3 +1,4 @@
+import { updateLiquidityClue } from '@trezor/coinjoin-analysis';
 import { arrayShuffle, getWeakRandomInt } from '@trezor/utils';
 
 import { TX_SIGNING_DELAY } from '../../constants';
@@ -22,7 +23,6 @@ import {
 } from '../../utils/roundUtils';
 import type { Account } from '../Account';
 import * as coordinator from '../coordinator';
-import * as middleware from '../middleware';
 import { verifyRoundInputs } from './verifyRoundInputs';
 
 const getTransactionData = (
@@ -126,26 +126,22 @@ const getTransactionData = (
     };
 };
 
-const updateRawLiquidityClue = async (
+const updateRawLiquidityClue = (
     round: CoinjoinRoundShape,
     accounts: Account[],
     tx: CoinjoinTransactionData,
-    options: CoinjoinRoundOptions,
 ) => {
-    const result = await Promise.all(
-        accounts.map(account => {
-            const externalAmounts = tx.outputs
-                .filter(o => !account.changeAddresses.some(addr => addr.address === o.address))
-                .map(o => o.amount);
+    const result = accounts.map(account => {
+        const externalAmounts = tx.outputs
+            .filter(o => !account.changeAddresses.some(addr => addr.address === o.address))
+            .map(o => o.amount);
 
-            return middleware.updateLiquidityClue(
-                account.rawLiquidityClue,
-                round.roundParameters.MaxSuggestedAmount,
-                externalAmounts,
-                { baseUrl: options.middlewareUrl },
-            );
-        }),
-    );
+        return updateLiquidityClue(
+            account.rawLiquidityClue,
+            round.roundParameters.MaxSuggestedAmount,
+            externalAmounts,
+        );
+    });
 
     return accounts.map((account, index) => {
         // @ts-expect-error: indexing with noUncheckedIndexedAccess
@@ -245,12 +241,7 @@ export const transactionSigning = async (
         if (inputsWithoutWitness.length > 0) {
             round.setSessionPhase(SessionPhase.AwaitingCoinjoinTransaction);
             const transactionData = getTransactionData(round, options);
-            const liquidityClues = await updateRawLiquidityClue(
-                round,
-                accounts,
-                transactionData,
-                options,
-            );
+            const liquidityClues = updateRawLiquidityClue(round, accounts, transactionData);
             round.transactionData = transactionData;
             round.liquidityClues = liquidityClues;
 

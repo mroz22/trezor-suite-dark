@@ -150,8 +150,6 @@ export const init: ModuleInit = ({
 
             const coinjoinMiddleware = await synchronize(getCoinjoinProcess);
             const port = coinjoinMiddleware.getPort();
-            // override default url in coinjoin settings
-            settings.middlewareUrl = coinjoinMiddleware.getUrl();
             const client = new CoinjoinClient(settings);
             client.on('log', ({ level, payload }) => {
                 if (level === 'error') {

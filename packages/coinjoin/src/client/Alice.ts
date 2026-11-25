@@ -1,3 +1,5 @@
+import { type Credential } from '@trezor/wabisabi-crypto';
+
 import { CoordinatorMisbehaviorError } from './coordinator';
 import { type AccountUtxo } from '../types/account';
 import {
@@ -12,7 +14,6 @@ import {
     type RealCredentials,
     type RegistrationData,
 } from '../types/coordinator';
-import { type Credentials } from '../types/middleware';
 import { getInputSize, getOutputSize, getWitnessFromSignature } from '../utils/coordinatorUtils';
 
 export class Alice implements AliceShape {
@@ -33,8 +34,8 @@ export class Alice implements AliceShape {
     realVsizeCredentials?: RealCredentials; // data from inputRegistration phase
     confirmationInterval?: AliceConfirmationInterval;
     confirmationData?: ConfirmationData; // data from connectionConfirmation phase
-    confirmedAmountCredentials?: Credentials[]; // data from connectionConfirmation phase
-    confirmedVsizeCredentials?: Credentials[]; // data from connectionConfirmation phase
+    confirmedAmountCredentials?: Credential[]; // data from connectionConfirmation phase
+    confirmedVsizeCredentials?: Credential[]; // data from connectionConfirmation phase
     witness?: string; // received as response to RequestEvent, provided by wallet (Suite)
     witnessIndex?: number; // received as response to RequestEvent, provided by wallet (Suite)
     error?: Error;
@@ -116,7 +117,7 @@ export class Alice implements AliceShape {
         this.confirmationData = data;
     }
 
-    setConfirmedCredentials(amount: Credentials[], vsize: Credentials[]) {
+    setConfirmedCredentials(amount: Credential[], vsize: Credential[]) {
         this.confirmedAmountCredentials = amount;
         this.confirmedVsizeCredentials = vsize;
     }

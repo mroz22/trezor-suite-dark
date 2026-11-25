@@ -1,3 +1,4 @@
+import { getOutputAmounts } from '@trezor/coinjoin-strategy';
 import { createDeferred } from '@trezor/utils';
 import { networks } from '@trezor/utxo-lib';
 
@@ -41,6 +42,17 @@ jest.mock('@trezor/utils', () => ({
 jest.mock('../utils/ownershipProof', () => ({
     verifyOwnershipProof: () => 'valid',
 }));
+
+// The decomposer draws random amounts, a test pins them where it counts the outputs.
+jest.mock('@trezor/coinjoin-strategy', () => {
+    const actual = jest.requireActual('@trezor/coinjoin-strategy');
+
+    return { ...actual, getOutputAmounts: jest.fn(actual.getOutputAmounts) };
+});
+
+// The blame round cases run the real credential crypto against the mock coordinator's issuer, which
+// takes seconds on a loaded CI runner.
+jest.setTimeout(60_000);
 
 describe(`CoinjoinClient`, () => {
     let server: Awaited<ReturnType<typeof createServer>>;
@@ -298,6 +310,53 @@ describe(`CoinjoinClient`, () => {
         createSpy.mockRestore();
     });
 
+    it('selects for one round at a time and once more for requests during it', async () => {
+        const selections = [createDeferred<undefined>(), createDeferred<undefined>()];
+        let started = 0;
+        const createSpy = jest.spyOn(CoinjoinRound, 'create').mockImplementation(() => {
+            started += 1;
+
+            return selections[started - 1]!.promise;
+        });
+        const account = (accountKey: string): RegisterAccountParams => ({
+            accountKey,
+            scriptType: 'Taproot',
+            utxos: [],
+            changeAddresses: [],
+            targetAnonymity: 10,
+            rawLiquidityClue: 0,
+            maxFeePerKvbyte: 1,
+            maxCoordinatorFeeRate: 1,
+            maxRounds: 10,
+        });
+        // registerAccount triggers round processing without awaiting it
+        const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+
+        const cli = new CoinjoinClient(server?.requestOptions);
+        cli.registerAccount(account('account-A'));
+        await flush();
+        // Both come while the first selection runs.
+        cli.registerAccount(account('account-B'));
+        cli.updateAccount(account('account-A'));
+        await flush();
+        expect(createSpy).toHaveBeenCalledTimes(1);
+
+        selections[0]!.resolve(undefined);
+        await flush();
+        expect(createSpy).toHaveBeenCalledTimes(2);
+        expect(createSpy.mock.calls[1]![0].accounts.map(a => a.accountKey)).toEqual([
+            'account-A',
+            'account-B',
+        ]);
+
+        selections[1]!.resolve(undefined);
+        await flush();
+        expect(createSpy).toHaveBeenCalledTimes(2);
+
+        cli.disable();
+        createSpy.mockRestore();
+    });
+
     it.each([
         ['btc', undefined, 21],
         ['test', undefined, 2],
@@ -473,11 +532,12 @@ describe(`CoinjoinClient`, () => {
         // fails.
         const runBlameRound = async (otherOutpoints: string[]) => {
             // Its input registration ends in 2 minutes. Inputs confirm their connection every half
-            // of the timeout, keep the test short.
+            // of the timeout; it leaves the real credential crypto of a confirmation time to finish
+            // before the deadline on a loaded machine.
             const blameStatusRound = createStatusRound({
                 BlameOf: FAILED_ROUND.Id,
                 InputRegistrationStart: new Date(Date.now() + 60000).toISOString(),
-                RoundParameters: { ConnectionConfirmationTimeout: '0d 0h 0m 1s' },
+                RoundParameters: { ConnectionConfirmationTimeout: '0d 0h 0m 10s' },
             });
             const createBlameRound = (Phase: RoundPhase, Events: CoinjoinStateEvent[] = []) => ({
                 ...blameStatusRound,
@@ -510,13 +570,6 @@ describe(`CoinjoinClient`, () => {
                         createBlameRound(RoundPhase.ConnectionConfirmation),
                     ];
                     resolve();
-                } else if (url.endsWith('/connection-confirmation')) {
-                    resolve({
-                        RealAmountCredentials: [{ Value: 12000000 }, { Value: 0 }],
-                        RealVsizeCredentials: [{ Value: 200 }, { Value: 0 }],
-                    });
-                } else if (url.endsWith('/get-outputs-amounts')) {
-                    resolve({ OutputAmounts: [11000000] });
                 } else if (url.endsWith('/ready-to-sign')) {
                     outputRegistrationDone.resolve();
                     resolve();
@@ -629,6 +682,8 @@ describe(`CoinjoinClient`, () => {
         };
 
         it('registers outputs in a blame round with inputs of the failed round', async () => {
+            // One output, so that only the address of the failed round is registered.
+            jest.mocked(getOutputAmounts).mockReturnValueOnce([11000000]);
             const { requestedUrls, registeredScripts, blameRound } = await runBlameRound([
                 OTHER_OUTPOINT,
             ]);

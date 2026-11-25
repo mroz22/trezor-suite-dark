@@ -1,4 +1,6 @@
+import { getOutputAmounts } from '@trezor/coinjoin-strategy';
 import { arrayToDictionary, getWeakRandomId } from '@trezor/utils';
+import { type Credential, secureRandom } from '@trezor/wabisabi-crypto';
 
 import { SessionPhase } from '../../enums';
 import type { CoinjoinRoundOptions, CoinjoinRoundShape } from '../../types/round';
@@ -7,7 +9,7 @@ import { formatRedactedValues } from '../../utils/redacted';
 import { compareOutpoint, getRoundEvents, sumCredentials } from '../../utils/roundUtils';
 import type { Account } from '../Account';
 import * as coordinator from '../coordinator';
-import * as middleware from '../middleware';
+import * as credentials from '../credentials';
 
 /**
  * RoundPhase: 2, step 1
@@ -25,10 +27,10 @@ interface GetOutputAmountsParams {
     outputSize: number;
 }
 
-const getOutputAmounts = async (params: GetOutputAmountsParams) => {
+const getDecomposedOutputAmounts = async (params: GetOutputAmountsParams) => {
     const { round, accountKey, outputSize, options } = params;
     const { roundParameters } = round;
-    const { signal, middlewareUrl, logger } = options;
+    const { logger } = options;
 
     const registeredInputs = getRoundEvents('InputAdded', round.coinjoinState.Events);
     const InternalAmounts: number[] = [];
@@ -41,8 +43,8 @@ const getOutputAmounts = async (params: GetOutputAmountsParams) => {
         );
         if (internal) {
             // @ts-expect-error: indexing with noUncheckedIndexedAccess
-            const firstCredential: middleware.Credentials = internal.confirmedAmountCredentials![0];
-            InternalAmounts.push(firstCredential.Value);
+            const firstCredential: Credential = internal.confirmedAmountCredentials![0];
+            InternalAmounts.push(firstCredential.value);
         } else {
             const size = getExternalOutputSize(i.Coin.TxOut.ScriptPubKey);
             const miningFee = Math.floor((size * roundParameters.MiningFeeRate) / 1000);
@@ -55,7 +57,10 @@ const getOutputAmounts = async (params: GetOutputAmountsParams) => {
     logger.info(`Internal inputs: ${formatRedactedValues(InternalAmounts)}`);
     logger.info(`External inputs: ${ExternalAmounts.join(',')}`);
 
-    const outputAmounts = await middleware.getOutputsAmounts(
+    // Decomposition runs ten thousand pre-decomposition iterations, so hand the event
+    // loop back before and after it; see `credentials.yieldToEventLoop`.
+    await credentials.yieldToEventLoop();
+    const outputAmounts = getOutputAmounts(
         {
             InputSize: params.inputSize,
             OutputSize: outputSize,
@@ -65,13 +70,19 @@ const getOutputAmounts = async (params: GetOutputAmountsParams) => {
             InternalAmounts,
             ExternalAmounts,
         },
-        { signal, baseUrl: middlewareUrl },
+        secureRandom,
     );
+    await credentials.yieldToEventLoop();
     logger.info(`Decompose amounts: ${formatRedactedValues(outputAmounts)}`);
 
     return outputAmounts.map(amount => {
         const miningFee = Math.floor((outputSize * roundParameters.MiningFeeRate) / 1000);
-        const coordinatorFee = 0; // NOTE: middleware issue https://github.com/zkSNACKs/WalletWasabi/issues/8814 should be `amount > plebsDontPayThreshold ? Math.floor(roundParameters.coordinationFeeRate.rate * amount) : 0` but middleware does not considerate coordinationFeeRate and plebs for external amounts
+        // NOTE: upstream issue https://github.com/zkSNACKs/WalletWasabi/issues/8814, which
+        // the port reproduces. This should be
+        // `amount > plebsDontPayThreshold ? Math.floor(roundParameters.coordinationFeeRate.rate * amount) : 0`,
+        // but the decomposer does not take coordinationFeeRate or plebs into account for
+        // external amounts.
+        const coordinatorFee = 0;
 
         return amount + coordinatorFee + miningFee;
     });
@@ -81,8 +92,8 @@ interface CredentialIssuanceParams {
     round: CoinjoinRoundShape;
     amountToRequest: [number, number];
     vsizeToRequest: [number, number];
-    amountCredentials: [middleware.Credentials, middleware.Credentials];
-    vsizeCredentials: [middleware.Credentials, middleware.Credentials];
+    amountCredentials: [Credential, Credential];
+    vsizeCredentials: [Credential, Credential];
     options: CoinjoinRoundOptions;
 }
 
@@ -94,14 +105,14 @@ interface CredentialIssuanceParams {
 const credentialIssuance = async (params: CredentialIssuanceParams) => {
     const { round, amountToRequest, amountCredentials, vsizeToRequest, vsizeCredentials } = params;
     const { roundParameters } = round;
-    const { signal, coordinatorUrl, middlewareUrl, logger } = params.options;
+    const { signal, coordinatorUrl, logger } = params.options;
 
     logger.info('Joining credentials');
     logger.info(
-        `Amount ${formatRedactedValues(amountCredentials.map(c => c.Value))} to ${formatRedactedValues(amountToRequest)}`,
+        `Amount ${formatRedactedValues(amountCredentials.map(c => c.value))} to ${formatRedactedValues(amountToRequest)}`,
     );
     logger.info(
-        `Vsize ${vsizeCredentials.map(c => c.Value).join(',')} to ${vsizeToRequest.join(',')}`,
+        `Vsize ${vsizeCredentials.map(c => c.value).join(',')} to ${vsizeToRequest.join(',')}`,
     );
 
     // Credentials are always joined in pairs
@@ -112,29 +123,31 @@ const credentialIssuance = async (params: CredentialIssuanceParams) => {
     )
         throw new Error('Not enough Credentials to join');
 
-    const issuanceAmountCredentials = await middleware.getRealCredentials(
+    // `getRealCredentials` yields between the proofs it builds, so it needs no yield
+    // after it.
+    const issuanceAmountCredentials = await credentials.getRealCredentials(
         amountToRequest,
         amountCredentials,
         round.amountCredentialIssuerParameters,
         roundParameters.MaxAmountCredentialValue,
-        { signal, baseUrl: middlewareUrl },
     );
-    const issuanceVsizeCredentials = await middleware.getRealCredentials(
+    const issuanceVsizeCredentials = await credentials.getRealCredentials(
         vsizeToRequest,
         vsizeCredentials,
         round.vsizeCredentialIssuerParameters,
         roundParameters.MaxVsizeAllocationPerAlice,
-        { signal, baseUrl: middlewareUrl },
     );
 
-    const zeroAmountCredentials = await middleware.getZeroCredentials(
+    const zeroAmountCredentials = credentials.getZeroCredentials(
         round.amountCredentialIssuerParameters,
-        { signal, baseUrl: middlewareUrl },
+        roundParameters.MaxAmountCredentialValue,
     );
-    const zeroVsizeCredentials = await middleware.getZeroCredentials(
+    await credentials.yieldToEventLoop();
+    const zeroVsizeCredentials = credentials.getZeroCredentials(
         round.vsizeCredentialIssuerParameters,
-        { signal, baseUrl: middlewareUrl },
+        roundParameters.MaxVsizeAllocationPerAlice,
     );
+    await credentials.yieldToEventLoop();
 
     // use random identity for each request
     const issuanceData = await coordinator.credentialIssuance(
@@ -153,51 +166,53 @@ const credentialIssuance = async (params: CredentialIssuanceParams) => {
     );
 
     // create credentials for output
-    const amountCredentialsOut = await middleware.getCredentials(
+    const amountCredentialsOut = credentials.getCredentials(
         round.amountCredentialIssuerParameters,
+        roundParameters.MaxAmountCredentialValue,
         issuanceData.RealAmountCredentials,
         issuanceAmountCredentials.CredentialsResponseValidation,
-        { signal, baseUrl: middlewareUrl },
     );
-    const vsizeCredentialsOut = await middleware.getCredentials(
+    const vsizeCredentialsOut = credentials.getCredentials(
         round.vsizeCredentialIssuerParameters,
+        roundParameters.MaxVsizeAllocationPerAlice,
         issuanceData.RealVsizeCredentials,
         issuanceVsizeCredentials.CredentialsResponseValidation,
-        { signal, baseUrl: middlewareUrl },
     );
+    await credentials.yieldToEventLoop();
 
     // create zero credentials
-    const zeroAmountCredentialsOut = await middleware.getCredentials(
+    const zeroAmountCredentialsOut = credentials.getCredentials(
         round.amountCredentialIssuerParameters,
+        roundParameters.MaxAmountCredentialValue,
         issuanceData.ZeroAmountCredentials,
         zeroAmountCredentials.CredentialsResponseValidation,
-        { signal, baseUrl: middlewareUrl },
     );
-    const zeroVsizeCredentialsOut = await middleware.getCredentials(
+    const zeroVsizeCredentialsOut = credentials.getCredentials(
         round.vsizeCredentialIssuerParameters,
+        roundParameters.MaxVsizeAllocationPerAlice,
         issuanceData.ZeroVsizeCredentials,
         zeroVsizeCredentials.CredentialsResponseValidation,
-        { signal, baseUrl: middlewareUrl },
     );
+    await credentials.yieldToEventLoop();
 
     // return pairs of new credentials
     // requested Credentials
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const amountOut0: middleware.Credentials = amountCredentialsOut[0];
+    const amountOut0: Credential = amountCredentialsOut[0];
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const zeroAmountOut0: middleware.Credentials = zeroAmountCredentialsOut[0];
+    const zeroAmountOut0: Credential = zeroAmountCredentialsOut[0];
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const vsizeOut0: middleware.Credentials = vsizeCredentialsOut[0];
+    const vsizeOut0: Credential = vsizeCredentialsOut[0];
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const zeroVsizeOut0: middleware.Credentials = zeroVsizeCredentialsOut[0];
+    const zeroVsizeOut0: Credential = zeroVsizeCredentialsOut[0];
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const amountOut1: middleware.Credentials = amountCredentialsOut[1];
+    const amountOut1: Credential = amountCredentialsOut[1];
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const zeroAmountOut1: middleware.Credentials = zeroAmountCredentialsOut[1];
+    const zeroAmountOut1: Credential = zeroAmountCredentialsOut[1];
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const vsizeOut1: middleware.Credentials = vsizeCredentialsOut[1];
+    const vsizeOut1: Credential = vsizeCredentialsOut[1];
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const zeroVsizeOut1: middleware.Credentials = zeroVsizeCredentialsOut[1];
+    const zeroVsizeOut1: Credential = zeroVsizeCredentialsOut[1];
 
     const output = {
         amountCredentials: [amountOut0, zeroAmountOut0],
@@ -212,13 +227,13 @@ const credentialIssuance = async (params: CredentialIssuanceParams) => {
     };
 
     logger.info(
-        `Output amount credentials: ${formatRedactedValues(output.amountCredentials.map(c => c.Value))}`,
+        `Output amount credentials: ${formatRedactedValues(output.amountCredentials.map(c => c.value))}`,
     );
-    logger.info(`Output vsize credentials: ${output.vsizeCredentials.map(c => c.Value).join(',')}`);
+    logger.info(`Output vsize credentials: ${output.vsizeCredentials.map(c => c.value).join(',')}`);
     logger.info(
-        `Change amount credentials: ${formatRedactedValues(change.amountCredentials.map(c => c.Value))}`,
+        `Change amount credentials: ${formatRedactedValues(change.amountCredentials.map(c => c.value))}`,
     );
-    logger.info(`Change vsize credentials: ${change.vsizeCredentials.map(c => c.Value).join(',')}`);
+    logger.info(`Change vsize credentials: ${change.vsizeCredentials.map(c => c.value).join(',')}`);
 
     return {
         output,
@@ -228,20 +243,20 @@ const credentialIssuance = async (params: CredentialIssuanceParams) => {
 
 const findCredentialsForTarget = (
     target: number,
-    credentials: middleware.Credentials[],
+    pool: Credential[],
     maxValue: number,
-): [middleware.Credentials, middleware.Credentials] | undefined => {
+): [Credential, Credential] | undefined => {
     // sort descending. higher possibility for match
-    const sorted = credentials.sort((a, b) => (a.Value > b.Value ? -1 : 1));
+    const sorted = pool.sort((a, b) => (a.value > b.value ? -1 : 1));
 
     // find one Credential big enough to cover requested target
-    const bigCredential = sorted.find(cre => cre.Value >= target);
+    const bigCredential = sorted.find(cre => cre.value >= target);
     if (bigCredential) {
         // try find a pair to produce change Credential used in next iteration
         // always try to pair with greatest Credential or at least 0 value Credential
-        const changeValue = bigCredential.Value - target;
+        const changeValue = bigCredential.value - target;
         const pair = sorted.find(
-            cre => cre !== bigCredential && cre.Value + changeValue <= maxValue,
+            cre => cre !== bigCredential && cre.value + changeValue <= maxValue,
         );
         if (pair) {
             return [bigCredential, pair];
@@ -256,7 +271,7 @@ const findCredentialsForTarget = (
             // always try to pair with greatest Credential to produce greatest possible change
             const pair = sorted
                 .slice(index + 1)
-                .find(p => p.Value + cre.Value >= target && p.Value + cre.Value <= maxValue);
+                .find(p => p.value + cre.value >= target && p.value + cre.value <= maxValue);
 
             if (pair) {
                 return [cre, pair];
@@ -268,9 +283,9 @@ const findCredentialsForTarget = (
 
     if (!candidate) return undefined;
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const first: middleware.Credentials = candidate[0];
+    const first: Credential = candidate[0];
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
-    const second: middleware.Credentials = candidate[1];
+    const second: Credential = candidate[1];
 
     return [first, second];
 };
@@ -278,8 +293,8 @@ const findCredentialsForTarget = (
 export interface Bob {
     accountKey: string;
     amount: number;
-    amountCredentials: middleware.Credentials[];
-    vsizeCredentials: middleware.Credentials[];
+    amountCredentials: Credential[];
+    vsizeCredentials: Credential[];
 }
 
 interface CreateOutputsCredentials {
@@ -288,8 +303,8 @@ interface CreateOutputsCredentials {
     accountKey: string;
     outputSize: number;
     amounts: number[];
-    amountCredentials: middleware.Credentials[];
-    vsizeCredentials: middleware.Credentials[];
+    amountCredentials: Credential[];
+    vsizeCredentials: Credential[];
     result: Bob[];
 }
 
@@ -425,7 +440,7 @@ export interface DecomposedOutputs {
     outputs: Bob[];
 }
 
-// Fail the inputs of one account, for example when the middleware cannot decompose its amounts.
+// Fail the inputs of one account, for example when its amounts cannot be decomposed.
 // The other accounts register their outputs and sign, so their inputs are not banned for it. A lie
 // of the coordinator is not a failure of one account: it is rethrown, so it fails all inputs of the
 // round and stops the client (see outputRegistration and CoinjoinClient).
@@ -497,7 +512,7 @@ export const outputDecomposition = async (
                 availableAddresses.length * outputSize,
             );
 
-            return getOutputAmounts({
+            return getDecomposedOutputAmounts({
                 round,
                 accountKey,
                 availableVsize,

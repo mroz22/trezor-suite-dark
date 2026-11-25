@@ -14,7 +14,7 @@ const OWN_SCRIPT_PUBKEY = '1 fc485427c6b286466faca747ad0faf6aaf6f7ef72ef7c81a206
 const OTHER_SCRIPT_PUBKEY = '1 6a6daebd9abae25cdd376b811190163eb00c58e87da1867ba8546229098231c3';
 
 // An own input which got its confirmed credentials from the coordinator.
-const CONFIRMED = { confirmedAmountCredentials: [{ Value: 1 }] };
+const CONFIRMED = { confirmedAmountCredentials: [{ value: 1 }] };
 
 // Taproot input with its ownership proof for round 1 of the coordinator www.example.com, from
 // trezor-firmware tests/device_tests/bitcoin/test_authorize_coinjoin.py (test_sign_tx).
@@ -110,8 +110,8 @@ describe('verifyRoundInputs', () => {
     it.each([
         ['missing', undefined],
         ['with a different amount', { ScriptPubKey: OWN_SCRIPT_PUBKEY, Value: 2 }],
-        ['with a different script', { ScriptPubKey: OTHER_SCRIPT_PUBKEY, Value: 1 }],
-        ['with a malformed script', { ScriptPubKey: '1 zz', Value: 1 }],
+        ['with a different script', { ScriptPubKey: OTHER_SCRIPT_PUBKEY, Value: 1_000_000 }],
+        ['with a malformed script', { ScriptPubKey: '1 zz', Value: 1_000_000 }],
     ])('refuses an own input %s', (_, TxOut) => {
         const round = createRound([OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT]);
         if (TxOut) {
