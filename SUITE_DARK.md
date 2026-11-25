@@ -79,7 +79,10 @@ builds on the coinjoin commits, so offer it after them, in this order. The read-
 feature that applies to plain `develop` in this order: navigation outside the wallet no longer cancels scans, a
 failed scan no longer leaves a stale balance, the accounts are scanned once their coinjoin client has loaded, and
 one banner replaces the discovery loader of an account that was discovered before. The banner needs the third fix,
-because it shows a loading client as a sync that is about to start.
+because it shows a loading client as a sync that is about to start. Two later coinjoin fixes (2026-11-22 and
+2026-11-23: own amounts redacted in round logs, an output registration that fails only the failing account) build on
+the coinjoin commits up to `fix(coinjoin): never reuse output scripts after a failed round`, not on the coordinator
+list; offer them once those are in, in this order.
 
 - `fix(suite): skip the trading catalog request in restricted regions`: not offered
 - `fix(suite): run the 26.12.0.1 storage migration on databases at 26.12.0`: not offered
@@ -101,6 +104,8 @@ because it shows a loading client as a sync that is about to start.
 - `fix(coinjoin): update the balance of a Privacy account after a failed scan`: not offered
 - `fix(coinjoin): scan Privacy accounts once their coinjoin client has loaded`: not offered
 - `feat(suite): show the sync of a Privacy account in one banner`: not offered
+- `fix(coinjoin): redact own amounts in round logs`: not offered
+- `fix(coinjoin): fail only the failing account in output registration`: not offered
 
 ## Development branches
 
