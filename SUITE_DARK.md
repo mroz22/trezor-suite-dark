@@ -22,24 +22,29 @@ git grep -n "Suite Dark"                    # fork comments and brand strings; d
 ```
 
 Commit SHAs change on every rebase, so refer to fork commits by subject, not by SHA. What each fork commit
-changes and why is in its message; this file keeps what git does not: decisions, postponed work, known gaps,
-upstream pull requests and how to work here.
+changes and why is in its message; this file keeps what git does not: decisions, postponed work, known gaps and
+how to work here.
 
 ## Upstream first
 
 The owner's plan for the project (2026-11-20): Suite Dark is where features land that upstream Trezor Suite has no
 time or energy for. Each one is built here until it is finished and works, then shown to the upstream team to
 convince them to take it. Whatever a feature needs that upstream could take on its own, above all refactoring, goes
-upstream separately and as early as possible. That keeps the fork small and the feature's final upstream pull
-request small. Fixes and hardening of upstream code go upstream first, before refactors and features. Commits are
-therefore split by where they are going:
+upstream separately, as its own pull request, ahead of the feature. That keeps the fork small and the feature's final
+upstream pull request small. Fixes and hardening of upstream code go upstream first, before refactors and features.
 
-| Kind              | Subject                                   | Last line of the message | Goes upstream                                                          |
-| ----------------- | ----------------------------------------- | ------------------------ | ---------------------------------------------------------------------- |
-| Upstream fix      | upstream style, e.g. `fix(coinjoin): …`   | `Upstream: fix`          | first, as soon as it is finished and tested in the fork, as its own PR |
-| Upstream refactor | upstream style, e.g. `refactor(suite): …` | `Upstream: refactor`     | as soon as possible, as its own PR                                     |
-| Upstream feature  | upstream style, e.g. `feat(coinjoin): …`  | `Upstream: feature`      | once it is finished and works in the fork                              |
-| Flavour           | `flavour: …`                              | none                     | never                                                                  |
+Every commit takes the same path (owner, 2026-11-25): `feature/<name>` → `staging`, where it is in daily use → `main`,
+and an upstream-bound one then → upstream. An upstream pull request is cut from a commit that is already on `main`:
+fixes first, then refactors and features, each after the commits it builds on. A commit that is only on `staging` goes
+upstream earlier only when the owner names it, for example a fix upstream users need now or a refactor upstream needs
+early. Commits are split by where they are going:
+
+| Kind              | Subject                                   | Last line of the message | Goes upstream, once on `main`             |
+| ----------------- | ----------------------------------------- | ------------------------ | ----------------------------------------- |
+| Upstream fix      | upstream style, e.g. `fix(coinjoin): …`   | `Upstream: fix`          | first, as its own PR                      |
+| Upstream refactor | upstream style, e.g. `refactor(suite): …` | `Upstream: refactor`     | as its own PR, before the feature's PR    |
+| Upstream feature  | upstream style, e.g. `feat(coinjoin): …`  | `Upstream: feature`      | once it is finished and works in the fork |
+| Flavour           | `flavour: …`                              | none                     | never                                     |
 
 - Every commit not meant for upstream is a flavour commit: the docs commit, the two CI commits and every fork
   change. Its subject is `flavour: <summary>`, with no type and no scope; upstream's `COMMITS.md` applies only to
@@ -61,51 +66,23 @@ therefore split by where they are going:
   a dependency forces an earlier place; the kind order applies among the promoted ones.
 - `Upstream: fix`, `Upstream: refactor` or `Upstream: feature` is a git trailer, alone in the last paragraph of the
   message. List the commits with `git log --oneline --grep '^Upstream:' develop..main`. Do not put upstream issue or
-  pull request numbers in fork commit messages (GitHub shows such references upstream); track them in the list
-  below. Refer to pull requests of other projects without `#` (`WalletWasabi PR 13658`), GitHub would link them.
+  pull request numbers in fork commit messages (GitHub shows such references upstream). Refer to pull requests of
+  other projects without `#` (`WalletWasabi PR 13658`), GitHub would link them.
 - Sending one upstream: the owner decides when, and only the owner's request for that specific pull request allows
   pushing to `trezor/trezor-suite` or opening it. Steps:
   [suite-dark-upstream-pr](skills/suite-dark-upstream-pr/SKILL.md). When upstream merges it, the next sync drops the
-  fork commit. If upstream declines a fix or a feature, it becomes a flavour commit
-  (`flavour: …`, no trailer).
+  fork commit. If upstream declines a commit, the owner decides whether it is dropped, kept upstream-bound for a later
+  attempt, or made a flavour commit (an `amend!` to `flavour: …` without the trailer). It can become flavour only when
+  no upstream-bound commit builds on it; the next promotion moves it after the upstream-bound commits.
 
-Upstream pull requests of the upstream-bound commits on `main`. Their state is read live with
-`gh pr view <n> --repo trezor/trezor-suite`; a sync drops a merged commit together with its line. Suite Dark
-needs the trading catalog fix for "hide trading". The coinjoin commits (2026-11-21, defences of the client against a
-malicious coordinator) are a stack: each applies to plain `develop` together with the coinjoin commits listed above
-it, so offer them upstream in this order. The coordinator list (2026-11-21: the selector refactor and the feature)
-builds on the coinjoin commits, so offer it after them, in this order. The read-only recommended settings
-(2026-11-23) build on the coordinator list. The Privacy account sync (2026-11-24) is a stack of three fixes and a
-feature that applies to plain `develop` in this order: navigation outside the wallet no longer cancels scans, a
-failed scan no longer leaves a stale balance, the accounts are scanned once their coinjoin client has loaded, and
-one banner replaces the discovery loader of an account that was discovered before. The banner needs the third fix,
-because it shows a loading client as a sync that is about to start. Two later coinjoin fixes (2026-11-22 and
-2026-11-23: own amounts redacted in round logs, an output registration that fails only the failing account) build on
-the coinjoin commits up to `fix(coinjoin): never reuse output scripts after a failed round`, not on the coordinator
-list; offer them once those are in, in this order.
-
-- `fix(suite): skip the trading catalog request in restricted regions`: not offered
-- `fix(suite): run the 26.12.0.1 storage migration on databases at 26.12.0`: not offered
-- `fix(coinjoin): cap the authorized coordinator fee at 0.1%`: not offered
-- `fix(coinjoin): skip rounds and refuse coinjoins with too few inputs`: not offered
-- `fix(coinjoin): apply fee and parameter limits to blame rounds`: not offered
-- `fix(coinjoin): verify own inputs and outputs before signing`: not offered
-- `refactor(utxo-lib): export BIP340 Schnorr signature verification`: not offered
-- `fix(coinjoin): verify other participants' ownership proofs`: not offered
-- `fix(coinjoin): check blame round inputs against the failed round`: not offered
-- `fix(coinjoin): verify round id against round parameters`: not offered
-- `fix(coinjoin): stop mixing when the coordinator lies`: not offered
-- `fix(coinjoin): never reuse output scripts after a failed round`: not offered
-- `fix(coinjoin): keep change of regular sends off burned coinjoin addresses`: not offered
-- `refactor(coinjoin): read the client settings through one selector`: not offered
-- `feat(coinjoin): choose the coinjoin coordinator from a list`: not offered
-- `feat(coinjoin): show the recommended coinjoin settings read-only`: not offered
-- `fix(coinjoin): keep scanning Privacy accounts outside the wallet`: not offered
-- `fix(coinjoin): update the balance of a Privacy account after a failed scan`: not offered
-- `fix(coinjoin): scan Privacy accounts once their coinjoin client has loaded`: not offered
-- `feat(suite): show the sync of a Privacy account in one banner`: not offered
-- `fix(coinjoin): redact own amounts in round logs`: not offered
-- `fix(coinjoin): fail only the failing account in output registration`: not offered
+The upstream pull requests are not tracked here. `git log --oneline --reverse --grep '^Upstream:' develop..main`
+lists the upstream-bound commits on `main` in series order (`develop..staging` adds the ones still waiting for a
+promotion); suite-dark-upstream-pr step 1 shows the fork commits one builds on (same files and the symbols it uses).
+The pull request of a commit and its state:
+`S=$(git log -1 --format=%s <sha>); gh pr list --repo trezor/trezor-suite --author mroz22 --state all --search "\"$S\" in:title"`.
+The owner's other
+upstream pull requests share the author, so an unfiltered list does not show the fork's; a pull request retitled in
+review is found only by its new title.
 
 ## Development branches
 
@@ -113,19 +90,25 @@ list; offer them once those are in, in this order.
 has been in daily use on `staging`, and only when the owner promotes it.
 
 - `staging` is the next `main`. The owner builds the desktop app from it and uses that build every day, which is the
-  main test of the work; CI checks every push. Small changes go there directly. Only the owner, or an agent with the
-  owner's permission, moves it. Between syncs and promotions it only fast-forwards.
-- `feature/<name>` holds a larger change, or one not ready for the daily build: `staging` plus the feature's commits.
-  It lands by a rebase onto the current `staging` and a fast-forward of `staging` to it, never by a merge. A draft
-  pull request for an overview has base `staging`. Branches in `trezor/trezor-suite` for upstream pull requests keep
-  the form `mroz22/<topic>`; locally such a branch is `upstream-pr/<topic>`, which never goes to `origin`.
+  main test of the work; CI checks every push. Work reaches it through pull requests that the owner merges (next
+  bullet). An agent pushes `staging` itself only in a sync or a promotion, or when the owner asks for that push
+  (suite-dark-branches step 4.4). Between syncs and promotions it only moves forward.
+- `feature/<name>` holds every change, small ones included: `staging` plus the change's commits. It lands through a
+  pull request against `staging` (owner, 2026-11-25): when the owner asks to put the work into `staging` ("dej to do
+  staging"), the agent brings the branch onto the current `staging`, pushes it and opens the pull request; a
+  force-push of a branch already on `origin` still needs his go for the command shown. The owner
+  merges it on GitHub with "Rebase and merge", never "Create a merge commit" or "Squash and merge", which break the
+  series. Rebase and merge gives the commits new SHAs, so the branch is deleted after the merge. An agent never pushes
+  to `staging` a branch that has an open pull request: GitHub would mark it merged, and agents never merge
+  (`AGENTS.md`). Branches in `trezor/trezor-suite` for upstream pull requests keep the form `mroz22/<topic>`; locally
+  such a branch is `upstream-pr/<topic>`, which never goes to `origin`.
 - `staging` is `main` plus commits on top, and a feature branch is `staging` plus commits on top, never a rewritten
   copy of the series. Then `git log --oneline main..staging` is exactly the pending work, and moving to a new base
   takes one command.
     - New work: commits as they should land on `main`, split as in Upstream first, each feature in its own commits so
       it can be promoted alone. Upstream-bound commits sit on top like the rest; promotion moves them to their place in
       the series.
-    - Changes to a commit that is already on `main` or pushed, this file included: a `fixup!` commit for it,
+    - Changes to a commit that is already on `main` or `staging`, this file included: a `fixup!` commit for it,
       `git commit --fixup=<that commit>`. When its message changes too, make an `amend!` commit instead:
       the subject `amend! <subject of that commit>`, a blank line, then the whole new message, written with
       `git commit -F` (`--fixup=amend:` needs an editor). Only a sync or a promotion folds them, on its candidate.
@@ -133,19 +116,29 @@ has been in daily use on `staging`, and only when the owner promotes it.
       marker only when the original is in the same rebase, and it also accepts a subject prefix or a SHA, so a marker
       that names an old or wrong subject stays unfolded without an error or folds into the wrong commit.
       `series-check.sh` (suite-dark-branches) reports such markers, and a sync or promotion retargets them, also when a
-      fold renames their target. Documentation changes come as one docs `fixup!` per feature, never mixed, so a
-      promotion can take a feature's text with it.
-- Every operation that rewrites branches (`sync`, `promote`, `rebase`, `cleanup`) first makes a backup of each branch
-  it moves: `backup/<branch>-pre-<op>-<yyyymmdd>`, with the branch name as is (`backup/staging-pre-sync-20261125`,
-  `backup/feature/pay-in-coinjoin-pre-promote-20261125`). Keep only the newest backup of each branch: at the end of
-  each operation, list the older ones and ask the owner once whether to delete them.
+      fold renames their target. A commit that is only on a feature branch is fixed in place by that feature's agent,
+      which folds its markers when it rebases the branch (suite-dark-branches step 5); `ci/*` branches do not count.
+      Documentation changes are docs `fixup!` commits, one per feature where possible, with a body naming the work
+      they document. A promotion copies the picked work's text onto `main`, splitting a fixup that covers more, and
+      keeps the rest on `staging` (suite-dark-promote steps 3-4).
+- Every operation that rewrites branches (`sync`, `promote`, `rebase`) first makes a backup of each branch it moves:
+  `backup/<branch>-pre-<op>-<yyyymmdd>`, with the branch name as is (`backup/staging-pre-sync-20261125`,
+  `backup/feature/pay-in-coinjoin-pre-promote-20261125`); a second operation on the same day appends `-2`, `-3` to
+  all its backup names. Keep the newest backup of each branch, and every `backup/staging-*` that a feature branch is
+  still built on, because it is that branch's old base: for some feature or workspace branch `<f>`, local or
+  `origin/feature/*`, `git merge-base --is-ancestor $(git merge-base <backup> <f>) origin/staging` fails. At the end of
+  each operation, list the other older ones and ask the owner once whether to delete them.
 - Set work aside with a WIP commit, never `git stash`: all worktrees share one stash. A branch checked out in another
   worktree (`git worktree list`) moves only when that worktree is clean, only with `git merge --ff-only` or
   `git reset --keep`; never `git branch -f`, `update-ref` or `reset --hard` on it.
-- After `main` moves (a sync or a promotion), `staging` moves onto it, then every feature branch onto `staging`.
-  Commits that the new base now contains drop out, so only the unpromoted work stays. The old base is the parent's
-  backup from that operation; `git merge-base --fork-point` is only the fallback. A promotion rebuilds `staging`
-  instead of rebasing it. Steps: [suite-dark-branches](skills/suite-dark-branches/SKILL.md).
+- After `main` moves (a sync or a promotion), `staging` moves onto it, then every feature branch onto `staging`, except
+  one whose agent is working right now: a running session in the worktree that has the branch checked out (Conductor
+  shows it; if unsure, ask the owner); a sync also leaves one still built on an earlier, rewritten `staging`
+  (suite-dark-sync precondition 4). That branch is left alone and reported as lagging, with its old base, and its
+  agent rebases it; if it has an open pull request, the report tells the owner not to merge it before that. Commits that
+  the new base now contains drop out, so only the unpromoted work stays. The old base is the parent's backup from that
+  operation; `git merge-base --fork-point` is only the fallback. A promotion rebuilds `staging` instead of rebasing
+  it. Steps: [suite-dark-branches](skills/suite-dark-branches/SKILL.md).
 - Promotion, of the commits the owner picks: `main` is rebuilt on `develop` in the series order (see Upstream first)
   with them in place and their `fixup!` and `amend!` commits folded. It ends with no marker left and differs from the
   old `main` only by the promoted changes. Steps: [suite-dark-promote](skills/suite-dark-promote/SKILL.md).
@@ -156,6 +149,8 @@ has been in daily use on `staging`, and only when the owner promotes it.
 
 Ask the owner before reversing any of these.
 
+- Simplest version that works (2026-11-21): offer the minimal version of a change first and list the extras
+  (failover, runtime detection, more options) as optional, with their size; build them only when the owner asks.
 - Desktop only. Web and mobile are not built, released or checked at runtime. Fork edits in shared code
   (`suite-common/*`, `packages/suite`) also change their behaviour (analytics and message-system defaults, discreet
   mode, `sendFeedbackThunk`); keep their unit tests and lint passing.
@@ -168,24 +163,25 @@ Ask the owner before reversing any of these.
   mode on by default. Functional traffic stays: blockchain backends, fiat rates, token definitions, firmware,
   Earn data, the country lookup and image proxy on `services.trezor.io`, Blockaid checks through
   `cdn.trezor.io`. One exception the fork keeps for now: a TRX vote in Earn is registered with Trezor's Earn server by
-  its transaction id, and removing that breaks voting. The website lists this traffic; keep both in sync.
+  its transaction id, and removing that breaks voting. The website lists this traffic as it is on `main` (Working
+  here, Website).
 - Kept on purpose: the backend User-Agent `Trezor Suite <version>` (blends in with Trezor Suite users) and the
   SatoshiLabs copyright and author. `process.env.VERSION` has no suffix, because it is sent in the backend User-Agent.
-- Coinjoin: upstream Privacy accounts plus the kruw.io default coordinator (tested by the owner), with the
-  client-side defences against a malicious coordinator listed under Upstream first (2026-11-21): a coordinator fee
-  cap of 0.1 % for any coordinator and none for the listed ones (kruw and OpenCoordinator), at least 21 inputs on
-  mainnet (2 on test networks), no solo coinjoins, checks of
-  the round id, of the ownership proofs and inputs of other participants, of own inputs and outputs and of blame
-  rounds, output scripts never reused after a failed round except in its blame rounds, outputs only on change
-  addresses up to the last used one plus 20 (the discovery lookout of 50 stays), and mixing stops with an error
-  message when the coordinator provably lies. Coordinators older than WalletWasabi 2.3.0 lose their blame rounds.
-  Users choose the coordinator from the list in the build, in a Privacy account's Coinjoin setup, one choice per
-  network for all its Privacy accounts, and the choice is kept (2026-11-21). The Coinjoin setup always shows its
-  settings, the coordinator included: Recommended shows the values a session uses, read-only, and keeps the
-  network's coordinator choice; Custom makes them editable (2026-11-23). No automatic switch to another coordinator,
-  no detection of a coordinator that stops responding while Suite runs (only the check when the client starts, the
-  rest goes to the log) and no custom coordinator address for now. Which coordinators the list names is the owner's
-  decision; OpenCoordinator was added on 2026-11-22. Suite Dark contacts it only once the user chooses it.
+- Coinjoin: upstream Privacy accounts plus the kruw.io default coordinator (tested by the owner), with the client-side
+  defences against a malicious coordinator, each its own upstream-bound commit (2026-11-21): a coordinator fee cap of
+  0.1 % for any coordinator (the fork's coordinator list allows 0 %, no fee, for kruw and OpenCoordinator), at least 21
+  inputs on mainnet (2 on test networks), no solo coinjoins, checks of the round id, of the ownership proofs and inputs
+  of other participants, of own inputs and outputs and of blame rounds, output scripts never reused after a failed round
+  except in its blame rounds, outputs only on change addresses up to the last used one plus 20 (the discovery lookout of
+  50 stays), and mixing stops with an error message when the coordinator provably lies. Coordinators older than
+  WalletWasabi 2.3.0 lose their blame rounds. Users choose the coordinator from the list in the build, in a Privacy
+  account's Coinjoin setup, one choice per network for all its Privacy accounts, and the choice is kept (2026-11-21).
+  The Coinjoin setup always shows its settings, the coordinator included: Recommended shows the values a session uses,
+  read-only, and keeps the network's coordinator choice; Custom makes them editable (2026-11-23). No automatic switch to
+  another coordinator, no detection of a coordinator that stops responding while Suite runs (only the check when the
+  client starts, the rest goes to the log) and no custom coordinator address for now. Which coordinators the list names
+  is the owner's decision; OpenCoordinator was added on 2026-11-22. Suite Dark contacts it only once the user chooses
+  it.
 - Password manager: upstream's Dropbox-based experimental feature, only renamed. Upstream does not save the
   experimental toggle (`packages/suite/src/actions/suite/storageActions.ts`), so it is off after every restart.
 - Minimal diff: prefer a default, flag or render site over editing many upstream lines; put fork-only values in
@@ -235,9 +231,9 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   mention buying or swapping (Activate assets modal, network reserve, staking hints, the bundled release notes).
 - The Earn yield API types (`suite-common/earn-stablecoin-defs`) carry KYC fields that nothing reads yet; an upstream
   Earn KYC step would need hiding.
-- The coinjoin defences are covered by unit tests only and have not run against kruw yet. In the first session,
-  watch the coinjoin log for skipped rounds (`Skipping round`, a round id that does not match its parameters, a min
-  input count below 21) and for refused ownership proofs; any of them on every round means a check refuses kruw.
+- The coinjoin defences have run against kruw in one successful round on the staging build (2026-11-25) and
+  otherwise only in unit tests. If rounds are skipped, the coinjoin log says why (`Skipping round`, a round id that
+  does not match its parameters, a min input count below 21, refused ownership proofs).
 - OpenCoordinator was only checked through its status on 2026-11-22 and has not mixed with Suite Dark, and changing
   the coordinator in the Coinjoin setup (`CoinjoinService.replaceClient`) has not run in the desktop app yet.
 
@@ -245,7 +241,8 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
 
 - Branches (owner's decision): `develop` is an exact mirror of upstream `develop`, locally and on `origin`; it only
   ever moves by fast-forward and never gets a fork commit. `main` carries the fork series, is the stable branch and the default branch on
-  GitHub; work happens on `staging` and `feature/<name>` branches (see Development branches). `gh-pages` holds the website (see below). Never use GitHub's "Sync fork" button on `main`: it would merge
+  GitHub; work happens on `feature/<name>` branches and reaches `staging` through pull requests (see Development
+  branches). `gh-pages` holds the website (see below). Never use GitHub's "Sync fork" button on `main`: it would merge
   upstream into the series.
 - Remotes: `upstream` is `trezor/trezor-suite` (fetches `develop` only, push disabled), `origin` is
   `mroz22/trezor-suite-dark` (all its branches: `+refs/heads/*:refs/remotes/origin/*`).
@@ -255,11 +252,11 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   README steps from `git submodule update --init --recursive`. Git LFS objects are upstream's and the fork changes
   none; the fork serves them too, so `git lfs pull` works from either remote.
 - Nx affected commands, `yarn format` and `yarn format:verify` compare against `origin/develop`, the mirror, so they
-  cover exactly the fork's changes as long as `origin/develop` equals the local `develop`; otherwise pass
-  `NX_BASE=develop`. Use `--base=<commit before your change>` for one change.
+  cover exactly the fork's changes as long as `origin/develop` equals the local `develop`. Affected runs over the
+  whole fork are impractical (see Checks); use `--base=<commit before your change>` for one change.
 - CI: on `main` and every branch made from it, `.github/workflows/suite-dark-check.yml` is the only workflow; the
-  upstream ones are deleted. It runs on every push to any branch except `develop` and `gh-pages`, so pushing a
-  feature branch is enough and no pull request is needed. It fails if another workflow file exists or if one of its
+  upstream ones are deleted. It runs on every push to any branch except `develop` and `gh-pages`, so CI needs no
+  pull request. It fails if another workflow file exists or if one of its
   pinned action SHAs is no longer pinned anywhere upstream (then take upstream's current pin). Then it runs a
   hardened `yarn --immutable` install (the lockfile check); ESLint with all rules, Stylelint, type-check and unit
   tests of the packages with changed files plus `@trezor/suite` and `@suite-app/app`, against the merge base with
@@ -278,12 +275,9 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   `yarn requirements:verify --only=<name>` per requirement except `connect-workflow-paths` (plain
   `yarn requirements:verify` stops there, it reads deleted workflows; the names are in
   `packages/requirements/src/requirements`). The repository's Actions settings are the owner's.
-- New fork change: check "Decisions already taken" first, split it as in Upstream first and build it on
-  `staging` or a feature branch (see Development branches). Promotion puts it in its place in the series (see Order
-  on `main` in Upstream first). The matching documentation (the upstream list, Decisions, Known gaps,
-  README intro when the user-visible feature list changes) goes into the docs commit, as a `fixup!` while the work is
-  on `staging` or a feature branch. Later fixes are `fixup!` or `amend!` commits on `staging` or a feature branch;
-  only a sync or a promotion folds them into the owning commit, on its candidate.
+- New fork change: check "Decisions already taken" first, split it as in Upstream first and build it on a feature
+  branch (see Development branches). The matching documentation (Decisions, Known gaps, README intro when the
+  user-visible feature list changes) is a docs `fixup!` on that branch.
 - Sync with upstream: the steps are in [suite-dark-sync](skills/suite-dark-sync/SKILL.md), with the list of patterns
   the audit looks for. `develop` only fast-forwards (see Branches). Resolve each conflict in the fork commit where the
   rebase stops. Most stops are in `flavour: remove the upstream workflows`, whenever upstream edited a workflow.
@@ -295,14 +289,19 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   Every sync audits the upstream delta for new traffic to Trezor servers, telemetry, feedback forms, banners and
   trading entry points. Neutralise each new surface inside the fork commit that owns its area, or list it on the
   website. Run the checks, update this file if a fork commit changed, and ask before the push.
-- Checks: CI runs them (see CI), but run them locally before asking to push. Throttle them, because a full parallel
-  run stalls the machine and every other session. `$P` holds the package names behind
+- Checks: CI runs them (see CI), but run them locally before asking to push. A change only to the docs commit's
+  files (`SUITE_DARK.md AGENTS.md README.md skills/suite-dark-* .claude/skills`) needs prettier on the changed `.md`
+  files, and for a changed script `bash -n` plus one run; CI covers the rest. Throttle the code checks, because a
+  full parallel run stalls the machine and every other session. `$P` holds the package names behind
   `git diff --name-only develop..HEAD` plus `@trezor/suite` and `@suite-app/app`, because a changed default can break
   tests far from the edited file:
-  `NX_NO_CLOUD=true ESLINT_RULE_SET=all nice -n 10 yarn nx run-many --targets=lint:js,type-check --projects=$P --parallel=1`,
+  `NX_NO_CLOUD=true ESLINT_RULE_SET=all nice -n 10 yarn nx run-many --targets=lint:js,lint:styles,type-check --projects=$P --parallel=1`,
   then the same with `--targets=test:unit` and `-- --maxWorkers=2` for Jest. Pass `--no-tui` or `--output-style`,
-  never both: Nx rejects the pair. Affected runs with `NX_BASE=develop` are impractical: the fork changes
-  `@trezor/theme` and `@trezor/urls`, so they select about 260 projects. Tests that import the Guide need its
+  never both: Nx rejects the pair. This covers less than CI, which also runs the hardened install, formatting, the
+  translation checks, the message-system config validation and the React Compiler check: when a sync or a
+  promotion cannot use CI, run those from `suite-dark-check.yml` too or report them as not run. Affected runs with
+  `NX_BASE=develop` are impractical: the fork changes widely shared inputs (`@trezor/theme`, `@trezor/utxo-lib`,
+  `yarn.lock`), so they select most projects. Tests that import the Guide need its
   generated content; build it once with `yarn workspace @suite/app-assets build:lib` (also part of
   `yarn build:essential`). A jest worker crash (`SIGSEGV`) or a timeout under load counts as a failure only if the test
   file also fails when rerun alone. A workspace without `node_modules` needs nothing for git-only work; for formatting
@@ -338,9 +337,10 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   English from the bundled `suite/intl/translations/en-US.json`, which overrides `defaultMessage`, so changing an
   existing English string means editing both files. A removed string leaves `messages.ts` only. Leave all other locale
   files alone; translation syncs would conflict. CI gates: `translations:list-unused`, `translations:list-duplicates`.
-- Pull requests: fork changes land as commits on `main`. Open a pull request only when the owner asks, against `staging`
-  of `mroz22/trezor-suite-dark`, and never merge it on GitHub (a merge or squash breaks the series). Do not reference
-  `trezor/trezor-suite` issues, pull requests or people in it (GitHub shows such references upstream).
+- Pull requests: work reaches `staging` through a pull request from its feature branch (see Development branches),
+  opened when the owner asks to put the work into `staging`, against `staging` of `mroz22/trezor-suite-dark`, its
+  description opening with the agent prefix `AGENTS.md` requires. Only the owner merges it, with "Rebase and merge".
+  Do not reference `trezor/trezor-suite` issues, pull requests or people in it (GitHub shows such references upstream).
 - Desktop packages are built only when the owner asks: follow upstream's `build-desktop-apps.yml` (`git show develop:.github/workflows/build-desktop-apps.yml`) for one
   platform (on macOS one electron-builder run per arch); output goes to `suite-app/desktop-app/build-electron/`. Never
   publish, tag, upload or change the version.
@@ -354,8 +354,9 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   Actions disabled) from the orphan branch `gh-pages`: `index.html`, `style.css`, two icons, `.nojekyll`. Edit it in a
   worktree (`git worktree add ../suite-dark-pages gh-pages`) after `git fetch origin gh-pages:gh-pages`, commit there
   and push with the owner's permission. It loads nothing from other hosts; keep it that way (no fonts, scripts or
-  analytics). Its feature and network lists must match this file and the fork commits; update it when a fork change
-  alters what users see or what the app sends. Its build steps are host-native only: Yarn installs native modules for
+  analytics). It describes `main`: its feature, network and commit descriptions must match this file and the fork
+  commits as they are on `main`. A promotion or sync that changes what `main` users see or what the app sends proposes
+  the matching website change to the owner. Its build steps are host-native only: Yarn installs native modules for
   the build machine.
 - Skills: the fork's workflows are `skills/suite-dark-*/` with their `.claude/skills` symlinks, part of the docs
   commit (change them with a docs `fixup!`) and listed in `AGENTS.md`. A new one also needs a directory symlink for

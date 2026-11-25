@@ -29,21 +29,26 @@ Rules: `SUITE_DARK.md` (Upstream first) and the Suite Dark section of `AGENTS.md
 
 ```bash
 LEAK='suite[ _-]?dark|flavour|kruw|co-authored-by'; C=<sha>; S=$(git log -1 --format=%s "$C")
-git log --format='%h %s' --grep='^Upstream: ' develop..origin/staging | grep -v -E '^[0-9a-f]+ (fixup|amend)! '
+git log --format='%h %s' --grep='^Upstream: ' develop..origin/main                    # the candidates
+git log --format='%h %s' --grep='^Upstream: ' origin/main..origin/staging | grep -v -E '^[0-9a-f]+ (fixup|amend)! '
 git log -1 --format='%h %s | %an <%ae> | Upstream: %(trailers:key=Upstream,valueonly,separator=%x2C)' "$C"
-git log --format='%h %s' develop..origin/staging | grep -F "! $S"   # markers that change it
+git log --format='%h %s' develop..origin/staging | grep -F "! $S"   # markers on staging that change it
 git cherry upstream/develop "$C" "$C^"                              # '-': the patch is upstream already
 gh pr list --repo trezor/trezor-suite --author mroz22 --state all --search "\"$S\" in:title"
 d=$(mktemp -d) && GIT_INDEX_FILE="$d/i" git read-tree upstream/develop &&
     git diff --binary "$C^" "$C" | GIT_INDEX_FILE="$d/i" git apply --cached --check 2>/dev/null &&
     echo 'applies to upstream/develop' || echo 'does not apply'; rm -rf "$d"
 git log --format='%h %s' upstream/develop.."$C^" -- $(git show --name-only --format= "$C" | grep -v '\.md$')
+git log --format='%h %s' -S'<symbol>' upstream/develop.."$C^"      # per symbol it uses that upstream/develop lacks
 git show "$C" | grep -n -i -E "$LEAK"; echo "leak grep exit $?"
 ```
 
-A candidate has the trailer, is on staging, has no PR, applies to `upstream/develop` and has no leak hit in its
-diff (step 2 removes message hits). If it does not apply, the `-- <files>` line lists the fork commits it builds on:
-offer those first, or adapt it in step 2. Give a verdict and a reason per commit, in the order Upstream first sets.
+A candidate has the trailer, is on `main`, has no marker on `staging` (it waits for the promotion that folds
+them), has no PR, applies to `upstream/develop` and has no leak hit in its diff (step 2 removes message hits). A
+commit only on `staging`, the second list, goes upstream only when the owner names it (SUITE_DARK.md, Upstream
+first). If it does not apply, the `-- <files>` line lists the fork commits it builds on in the same files, and the
+`-S` line the ones that add a symbol it uses (an import from another package, say): offer those first, or adapt it in
+step 2. Give a verdict and a reason per commit, in the order Upstream first sets.
 
 ### 2. Build the branch (once the owner has asked for this pull request)
 
@@ -56,11 +61,13 @@ git cherry-pick "$C"   # never -x, it names the fork commit; on a conflict resol
 git log -1 --format=%B | grep -v -E '^Upstream: (fix|refactor|feature)$' | git commit --amend --no-verify -q -F -
 ```
 
-- `upstream-pr/<topic>` is local only and never goes to `origin` (fork CI fails on upstream's workflows); the
-  branch in `trezor/trezor-suite` is `mroz22/<topic>`.
-- Several commits: the last two lines per commit, in series order. Staging's markers for `C` are picked after it
-  with `git cherry-pick --allow-empty` (never `--skip` a stop on an `amend!`) and folded with
-  `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash upstream/develop`; strip the trailer after that.
+- `upstream-pr/<topic>` is local only and never goes to `origin` (it is upstream's tree, not a fork branch;
+  upstream's checks run on the pull request); the branch in `trezor/trezor-suite` is `mroz22/<topic>`.
+- Several commits: the last two lines per commit, in series order. Staging's markers for `C` come in only in an
+  exception the owner named: pick them after it with `git cherry-pick --allow-empty` (never `--skip` a stop on an
+  `amend!`), fold them with `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash upstream/develop`, then strip the
+  trailer from every commit again, since a folded `amend!` brings it back:
+  `GIT_SEQUENCE_EDITOR=: git rebase -i upstream/develop -x 'git log -1 --format=%B | grep -v -E "^Upstream: (fix|refactor|feature)$" | git commit --amend --no-verify -q -F -'`.
 - On a conflict, keep only this commit's change. Adapt tests that rely on an earlier fork commit or a fork default
   (a fork-only test next to them, a fork mock) to plain upstream. Never pull fork commits in.
 - Drop leak hits and lines about fork branches or checks from the message, and follow upstream's
@@ -111,9 +118,9 @@ Then read `gh pr checks <n> --repo trezor/trezor-suite`. `check-project-or-issue
 a linked issue, and labels are the owner's. If a check fails the same way on upstream `develop` or other PRs, it is
 upstream's: report it.
 
-Switch back to the workspace branch; reinstall if `yarn.lock` differed. Record `` `<subject>`: PR <n> `` in the
-upstream list of SUITE_DARK.md with a docs `fixup!` that changes only that
-line, landed on staging with suite-dark-branches.
+Switch back to the workspace branch; reinstall if `yarn.lock` differed. Nothing is recorded in SUITE_DARK.md: a
+commit's pull request is found with step 1's `gh pr list ... --search` by its subject (an unfiltered author list
+mixes in the owner's other upstream pull requests).
 
 ### 6. Review round
 
@@ -141,18 +148,19 @@ gh api --paginate "repos/trezor/trezor-suite/pulls/<n>/comments" --jq '.[] | "\(
 
 ### 7. After merge or close
 
-- Merged: the docs need nothing; suite-dark-sync step 1 drops the fork commit, its markers and its list line.
+- Merged: the docs need nothing; the next sync drops the fork commit and its markers (suite-dark-sync steps 1
+  and 3).
 - List the merged local `upstream-pr/*` branches at the end, and ask once before `git branch -D`.
-- Closed unmerged: it becomes a flavour commit (Upstream first), a new fork commit to agree with the owner.
+- Closed unmerged: ask the owner what happens to the commit (SUITE_DARK.md, Upstream first).
 
 ## Gates
 
 1. Steps 2-6 need the owner's request for this pull request. Without it, only step 1 runs.
-2. A request to open the PR ("otevri", "udelej PR") is the go for exactly the step 5 push and `gh pr create` only
-   when every check of steps 1-4 passed without a leak hit and the patch is the fork commit's unchanged (equal
-   patch-ids, or only staging's markers folded in; only the trailer left the message). Show both commands before
-   running them. Otherwise, and after a request to prepare ("priprav") or to judge ("je to kandidat?"), stop at the
-   hand-off.
+2. A request to open the PR ("otevri", "udelej PR") is the go for exactly the step 5 push and `gh pr create` only when
+   every check of steps 1-4 passed without a leak hit and the patch is the fork commit's unchanged (equal patch-ids with
+   the fork commit, on `main` or, in an exception the owner named, on `staging`, there optionally with staging's markers
+   folded in; only the trailer left the message). Show both commands before running them. Otherwise, and after a request
+   to prepare ("priprav") or to judge ("je to kandidat?"), stop at the hand-off.
 3. Every later GitHub write needs its own go: pushes and force-pushes to the PR branch, replies, comments,
    description edits, labels, resolving threads, closing, and deleting `mroz22/<topic>`.
 4. Fork side: the suite-dark-branches push gate, and the owner's agreement for a new fork commit.

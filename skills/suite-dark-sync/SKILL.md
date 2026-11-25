@@ -7,7 +7,8 @@ description: Sync Suite Dark with trezor/trezor-suite develop by fast-forwarding
 
 Rules: `SUITE_DARK.md` (Development branches; Working here: Branches, CI, Sync with upstream, Checks) and the Suite
 Dark section of `AGENTS.md`. Moving branches, markers and CI: `skills/suite-dark-branches/SKILL.md`. `<d>` is the
-date of step 2 (`yyyymmdd`), `<O>` is `backup/develop-pre-sync-<d>`. Shell variables do not survive between
+date of step 2 (`yyyymmdd`, or `yyyymmdd-2` for a second operation that day, step 2), `<O>` is
+`backup/develop-pre-sync-<d>`. Shell variables do not survive between
 commands: paste literal values, never recompute `<d>` with `date`.
 
 ## When to use
@@ -21,25 +22,38 @@ Only on the owner's request for a sync in his own message; a `develop` that is b
    `git fetch --prune origin && git fetch upstream develop`.
 2. `skills/suite-dark-branches/scripts/series-check.sh --main origin/main origin/develop origin/staging origin/<f>`
    for each `<f>` in `git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/feature/`, before
-   `develop` moves. A local branch equal to or behind its origin ref is fine; local commits origin lacks: stop, ask.
+   `develop` moves. A local branch equal to or behind its origin ref is fine; local commits origin lacks: stop, ask,
+   except on a feature branch whose session is running, which stays out (precondition 4).
    Local `develop` may be ahead after an aborted sync if `git merge-base --is-ancestor origin/develop develop`.
    `MISSING`, `NESTED` and `UNFOLDED` lines go into step 1's table.
 3. `git worktree list` shows `develop` checked out nowhere; `git merge-base --is-ancestor develop upstream/develop`.
-4. A feature failing `git merge-base --is-ancestor origin/staging origin/<f>` stays out; report it.
+4. A feature whose session is running (SUITE_DARK.md, Development branches) stays out: report it with its old base
+   `backup/staging-pre-sync-<d>`. A feature still built on an earlier, rewritten `staging`, where
+   `git log --format=%s $(git merge-base origin/staging origin/<f>)..origin/<f> | grep -Fx 'flavour: document the fork for contributors and agents'`
+   prints the line, stays out too: report it for suite-dark-branches step 5, which finds its older base, after the
+   sync. For both, if it has an open pull request, tell the owner not to merge it before it is rebased. A feature
+   that only lags behind `staging` (pull requests merged since) is rebased like the rest; step 3's `<old>` limits it
+   to its own commits.
 
 ## Steps
 
 1. **Table** (read-only), then wait for the owner's answers. One row per `Upstream:` commit
    (`git log --oneline --grep='^Upstream:' develop..origin/<branch>`) and per `MISSING`/`NESTED` marker, with its
-   candidate (the branch its series-check line names), PR, PR state and action. PRs:
-   `gh pr list --repo trezor/trezor-suite --author mroz22 --state all --limit 50 --json number,state,mergedAt,title`,
-   per merged one `gh pr view <n> --repo trezor/trezor-suite --json commits --jq '.commits[].messageHeadline'`
-   (catches reworded subjects). Actions: _drops by itself_ (`UPSTREAM-SAME`); _drop by hand_ (merged with another
+   candidate (the branch its series-check line names), PR, PR state and action. PRs, per row:
+   `S=$(git log -1 --format=%s <sha>); gh pr list --repo trezor/trezor-suite --author mroz22 --state all --search "\"$S\" in:title" --json number,state,mergedAt,title`.
+   Reworded titles: for each PR of
+   `gh pr list --repo trezor/trezor-suite --author mroz22 --state merged --search "merged:>=$(git log -1 --format=%cs origin/develop)" --json number,title`,
+   `gh pr view <n> --repo trezor/trezor-suite --json commits --jq '.commits[].messageHeadline'`.
+   Actions: _drops by itself_ (`UPSTREAM-SAME`); _drop by hand_ (merged with another
    patch), with every marker naming it (`git log --oneline develop..origin/<branch> | grep -F '! <subject>'`) unless
    the owner keeps a marker's change as its own commit; _keep_; for a marker: A) retarget to `<subject>`, B) drop.
-   `UNFOLDED` markers stay on `main` until a promotion folds them.
+   `UNFOLDED` markers stay on `main` until a promotion folds them, unless step 6's fold takes them.
 2. **Backups and candidates, then `develop`.** The backups are the old bases and the lease pins; the candidates
-   tell other sessions a sync is running. If a name exists, stop and ask.
+   tell other sessions a sync is running. First `git fetch --prune origin`; go on only if
+   `git branch --list 'sync/*' 'promote/*'` prints nothing and `origin/main` and `origin/staging` still have the
+   `REF` SHAs of precondition 2, else redo from precondition 2. If a backup name exists (a second operation that day),
+   set `D` to `yyyymmdd-2` (then `-3`); `<d>` is that value everywhere, `<O>` included. Any other existing name: stop
+   and ask.
 
     ```bash
     D=$(date +%Y%m%d); echo "<d> is $D"; ok=1
@@ -72,8 +86,8 @@ Only on the owner's request for a sync in his own message; a `develop` that is b
 4. **Workflow-removal stop.** Handle it exactly as `SUITE_DARK.md` (Working here, Sync with upstream) says, continuing
    with step 3's `--continue`. Afterwards `git ls-tree --name-only sync/main .github/workflows/` lists only
    `suite-dark-check.yml`; otherwise fold the removal as in step 6.
-5. **Docs.** Remove the dropped commits' lines from the upstream list in `SUITE_DARK.md` (Upstream first): main's in
-   the docs commit on `sync/main` (fold as in step 6), staging's or a feature's in one docs `fixup!` on that
+5. **Docs.** Where `SUITE_DARK.md` describes a dropped commit as fork work (Decisions, Known gaps), update the text:
+   main's in the docs commit on `sync/main` (fold as in step 6), staging's or a feature's in one docs `fixup!` on that
    candidate. Format with prettier as in Checks.
 6. **Fixes and folds.** A clean rebase can still break where upstream renamed or removed something a fork commit uses
    (2026-11-23: the `#src/hooks/suite` barrel). Read the files both sides changed,
@@ -90,7 +104,9 @@ Only on the owner's request for a sync in his own message; a `develop` that is b
       `comm -12 <(git log --format=%s <O>..develop | sort) <(git log --format=%s --grep='^Upstream: ' develop..<candidate> | sort)`.
     - Per candidate, with step 3's ranges (`<O>..backup/main-pre-sync-<d> develop..sync/main`, and so on):
       `git range-diff --no-color <old range> <new range> | grep -E '^ *[0-9-]+: ' | grep -v ' = '`. Each `<` (gone)
-      is on the drop list, `UPSTREAM-SAME` or a folded marker; a `>` occurs only for step 5's docs `fixup!`. For each
+      is on the drop list, `UPSTREAM-SAME`, a folded marker or a feature commit `staging` already has under another
+      SHA (a merged pull request, `git cherry`), and every hand drop shows as a `<`; a `>` occurs only for step 5's
+      docs `fixup!` and step 10's caught-up commits. For each
       `!` read its full entry and say whether only context or a retargeted subject moved, or the change differs (a
       resolution or fix); report the second kind.
     - Per hand drop, explain every hunk of `git diff backup/staging-pre-sync-<d> sync/staging -- <files>` (the files
@@ -120,7 +136,9 @@ Only on the owner's request for a sync in his own message; a `develop` that is b
 10. **Catch up, then hand off.** `git fetch --prune origin`. Where `origin/staging` or a feature moved on from its
     backup, `git cherry-pick --allow-empty backup/<b>-pre-sync-<d>..origin/<b>` onto `sync/<b>`, rebuild the
     candidates above, repeat steps 7-8 and pin that lease to the new `origin/<b>`. Any other move: stop and ask.
-    Then the report and the exact push for the owner's go, leases pinned with `git rev-parse`:
+    A feature candidate equal to `sync/staging` (all its commits dropped) is not pushed: ask whether to delete it, as
+    suite-dark-promote step 8 does. Then the report and the exact push for the owner's go, leases pinned with
+    `git rev-parse`:
 
     ```bash
     # develop has no lease: it only fast-forwards
@@ -131,9 +149,10 @@ Only on the owner's request for a sync in his own message; a `develop` that is b
 
 11. **After the push.** `git ls-remote origin` shows the candidates' SHAs. Switch the own workspace back to its
     branch. Move local `main`, `staging`, the features and the worktrees holding them, the owner's checkout included,
-    with suite-dark-branches step 6. Delete the `sync/*` candidates, watch CI on `main` and `staging`
-    (`gh run list --repo mroz22/trezor-suite-dark --branch <b> --limit 1`), list the older backups
-    (`git branch --list 'backup/*'`) and ask once whether to delete them.
+    with suite-dark-branches step 6. Compare the website (`git show origin/gh-pages:index.html`) with the new `main`
+    and propose any change to the owner (SUITE_DARK.md, Website). Delete the `sync/*` candidates, watch CI on `main`
+    and `staging` (`gh run list --repo mroz22/trezor-suite-dark --branch <b> --limit 1`), list the older backups that
+    SUITE_DARK.md (Development branches) does not keep and ask once whether to delete them.
 
 **Abort** before the push: delete `sync/*` and, once their runs finished, `ci/sync-*`; keep the backups. Local
 `develop` may stay ahead of `origin/develop`: it is still a pure mirror, and the next sync accepts it.
