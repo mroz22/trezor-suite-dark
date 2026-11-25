@@ -88,6 +88,17 @@ export const Address = Type.Object(
     { $id: 'Address' },
 );
 
+export type CoinJoinPayment = Static<typeof CoinJoinPayment>;
+export const CoinJoinPayment = Type.Object(
+    {
+        address: Type.String(),
+        amount: Type.Uint(),
+        anchor_prev_hash: Type.String(),
+        anchor_prev_index: Type.Number(),
+    },
+    { $id: 'CoinJoinPayment' },
+);
+
 export type AuthorizeCoinJoin = Static<typeof AuthorizeCoinJoin>;
 export const AuthorizeCoinJoin = Type.Object(
     {
@@ -99,6 +110,7 @@ export const AuthorizeCoinJoin = Type.Object(
         coin_name: Type.Optional(Type.String()),
         script_type: Type.Optional(InputScriptType),
         amount_unit: Type.Optional(EnumAmountUnit),
+        payment: Type.Optional(CoinJoinPayment),
     },
     { $id: 'AuthorizeCoinJoin' },
 );

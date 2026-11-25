@@ -1,6 +1,9 @@
 import { getWeakRandomNumberInRange } from '@trezor/utils';
+import { networks } from '@trezor/utxo-lib';
 
 import {
+    getBroadcastedTxDetails,
+    getCoinjoinTransaction,
     getCommitmentData,
     getRoundParams,
     getSigningSendDeadline,
@@ -16,6 +19,7 @@ import {
     createStatusRound,
 } from '../__fixtures__/round.fixture';
 import type { CoinjoinRoundParameters } from '../types/coordinator';
+import type { CoinjoinTransactionData } from '../types/round';
 
 // mock random delay function
 jest.mock('@trezor/utils', () => {
@@ -181,6 +185,55 @@ describe('roundUtils', () => {
 
         // A collapsed interval would give both sends the same 10-second delay.
         expect(delays).toEqual([9250, 9750]);
+    });
+
+    it('getCoinjoinTransaction has the same txid with and without witnesses', () => {
+        const input = {
+            amount: 100000,
+            index: 0,
+            commitmentData: '',
+            address: '',
+            scriptPubKey: '',
+            ownershipProof: '',
+        };
+        const transactionData: CoinjoinTransactionData = {
+            inputs: [
+                { ...input, outpoint: '', hash: 'a1'.repeat(32) },
+                { ...input, outpoint: '', hash: 'b2'.repeat(32), index: 1 },
+            ],
+            outputs: [
+                {
+                    address: '',
+                    amount: 150000,
+                    scriptPubKey: `5120${'c3'.repeat(32)}`,
+                },
+                {
+                    address: '',
+                    amount: 49000,
+                    scriptPubKey: `0014${'d4'.repeat(20)}`,
+                },
+            ],
+            coinjoinRequest: { fee_rate: 0, no_fee_threshold: 0, min_registrable_amount: 5000 },
+        };
+        const witnesses = { 0: `0140${'e5'.repeat(64)}`, 1: `0140${'f6'.repeat(64)}` };
+
+        const unsigned = getCoinjoinTransaction({ transactionData, network: networks.bitcoin });
+        const signed = getCoinjoinTransaction({
+            transactionData,
+            network: networks.bitcoin,
+            witnesses,
+        });
+
+        expect(unsigned.hasWitnesses()).toBe(false);
+        expect(signed.hasWitnesses()).toBe(true);
+        expect(unsigned.getId()).toEqual(signed.getId());
+        expect(
+            getBroadcastedTxDetails({
+                coinjoinState: { Type: '', Events: [], IsFullySigned: true, Witnesses: witnesses },
+                transactionData,
+                network: networks.bitcoin,
+            })?.txid,
+        ).toEqual(unsigned.getId());
     });
 
     describe('getSigningSendDeadline', () => {

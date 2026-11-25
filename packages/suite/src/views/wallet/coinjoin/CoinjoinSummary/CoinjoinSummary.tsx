@@ -5,6 +5,7 @@ import { type AccountKey } from '@suite-common/wallet-types';
 import { H3 } from '@trezor/components';
 
 import { CoinjoinBalanceSection } from './CoinjoinBalanceSection';
+import { CoinjoinPayment } from './CoinjoinPayment/CoinjoinPayment';
 
 const Container = styled.div`
     width: 100%;
@@ -21,5 +22,7 @@ export const CoinjoinSummary = ({ accountKey }: CoinjoinSummaryProps) => (
         </H3>
 
         <CoinjoinBalanceSection accountKey={accountKey} />
+        {/* Suite Dark: pay in coinjoin, see docs/features/pay-in-coinjoin.md. */}
+        <CoinjoinPayment accountKey={accountKey} />
     </Container>
 );

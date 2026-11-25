@@ -111,7 +111,9 @@ export type UiRequestButtonData =
           serializedPath: string;
           coin: string;
           message: string;
-      };
+      }
+    // Suite Dark: a screen of the payment authorizeCoinjoin shows on Firmware Dark.
+    | { type: 'coinjoin-payment' };
 
 // ButtonRequest_FirmwareUpdate is a artificial button request thrown by "uploadFirmware" method
 // at the beginning of the uploading process

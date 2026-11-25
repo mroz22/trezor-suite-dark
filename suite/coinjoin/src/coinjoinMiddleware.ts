@@ -23,6 +23,7 @@ import {
 import { addToast } from '@suite-common/toast-notifications';
 import {
     type AccountsRootState,
+    type WalletSettingsRootState,
     accountsActions,
     blockchainActions,
     discoveryActions,
@@ -37,6 +38,7 @@ import { arrayDistinct, typedObjectKeys } from '@trezor/utils';
 
 import * as coinjoinAccountActions from './coinjoinAccountActions';
 import * as coinjoinClientActions from './coinjoinClientActions';
+import { selectCoinjoinPaymentToAuthorizeByAccountKey } from './coinjoinPaymentSelectors';
 import {
     type CoinjoinRootState,
     type SuiteOnlineRootState,
@@ -56,7 +58,8 @@ type CoinjoinMiddlewareState = AccountsRootState &
     RouterRootState &
     SelectedAccountRootState &
     SuiteOnlineRootState &
-    TorRootState;
+    TorRootState &
+    WalletSettingsRootState;
 
 export const coinjoinMiddleware =
     (api: MiddlewareAPI<Dispatch, CoinjoinMiddlewareState>) =>
@@ -225,7 +228,12 @@ export const coinjoinMiddleware =
                 const account = selectAccountByKey(state, accountKey);
                 if (account) {
                     const blocker = selectCoinjoinSessionBlockerByAccountKey(state, account.key);
-                    if (!blocker)
+                    // Suite Dark: pay in coinjoin, never ask the device to approve a payment
+                    // again without the user.
+                    if (
+                        !blocker &&
+                        !selectCoinjoinPaymentToAuthorizeByAccountKey(state, account.key)
+                    )
                         api.dispatch(
                             coinjoinAccountActions.restoreCoinjoinSessionThunk(account.key),
                         );

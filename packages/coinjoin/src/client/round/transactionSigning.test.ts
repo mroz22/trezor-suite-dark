@@ -6,6 +6,10 @@ import { createServer } from '../../../mocks/server';
 import { createInput } from '../../__fixtures__/input.fixture';
 import { createCoinjoinRound, createInputAddedEvent } from '../../__fixtures__/round.fixture';
 import { SessionPhase } from '../../enums';
+import type { AccountPayment } from '../../types/account';
+import type { CoinjoinStateEvent } from '../../types/coordinator';
+import type { CoinjoinRoundPayment } from '../../types/round';
+import type { Account } from '../Account';
 import * as coordinator from '../coordinator';
 
 // The inputs of other participants have no valid ownership proofs, see verifyRoundInputs.test.ts.
@@ -687,6 +691,356 @@ describe('transactionSigning', () => {
                         /1 inputs of the blame round were not in the failed round/,
                     );
                 });
+            });
+        });
+
+        describe('payments', () => {
+            const PAYEE_SCRIPT = '0 751e76e8199196d454941c45d1b3a323f1433bd6';
+            const EXTERNAL_OUTPUT_SCRIPT =
+                '1 b899b1962f24757bf8f641d125a88944d1541272cc86da7815ff7899e368b2d4';
+            const PAYMENT: AccountPayment = {
+                id: 'payment-1',
+                address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
+                amount: 100000,
+                anchor: OWN_OUTPOINT,
+                isCancelled: false,
+                scriptType: 'P2WPKH',
+                scriptPubKey: PAYEE_SCRIPT,
+                scriptPubKeyHex: '0014751e76e8199196d454941c45d1b3a323f1433bd6',
+                outputSize: 31,
+            };
+            const ROUND_PAYMENT: CoinjoinRoundPayment = {
+                accountKey: 'account-A',
+                paymentId: PAYMENT.id,
+                address: PAYMENT.address,
+                scriptPubKey: PAYMENT.scriptPubKey,
+                scriptPubKeyHex: PAYMENT.scriptPubKeyHex,
+                amount: PAYMENT.amount,
+                anchor: PAYMENT.anchor,
+            };
+
+            const outputAdded = (ScriptPubKey: string, Value: number): CoinjoinStateEvent => ({
+                Type: 'OutputAdded',
+                Output: { ScriptPubKey, Value },
+            });
+            const OWN_CHANGE = outputAdded(OWN_OUTPUT.scriptPubKey, OWN_OUTPUT.amount);
+            const PAYEE = outputAdded(PAYEE_SCRIPT, PAYMENT.amount);
+            const EXTERNAL = outputAdded(EXTERNAL_OUTPUT_SCRIPT, 30000);
+
+            const paymentAccount = (
+                payment: AccountPayment | undefined,
+                blockedPaymentIds: string[] = [],
+                accountKey = 'account-A',
+            ) =>
+                ({
+                    accountKey,
+                    changeAddresses: [{ address: OWN_OUTPUT.address }],
+                    rawLiquidityClue: null,
+                    updateRawLiquidityClue: () => {},
+                    payment,
+                    blockedPaymentIds,
+                }) as unknown as Account; // simplified Account
+
+            type SignTransactionParams = {
+                outputs: CoinjoinStateEvent[];
+                round?: Parameters<typeof createCoinjoinRound>[1]['round'];
+                accounts?: Account[];
+            };
+
+            // The own input of account-A is the anchor, the round has one input of another
+            // participant.
+            const createPaymentRound = ({
+                outputs,
+                round,
+            }: Omit<SignTransactionParams, 'accounts'>) =>
+                createCoinjoinRound([createInput('account-A', OWN_OUTPOINT, CONFIRMED)], {
+                    ...server?.requestOptions,
+                    round: {
+                        phase: 3,
+                        verifiedInputs: VERIFIED_INPUTS,
+                        addresses: [OWN_OUTPUT],
+                        payments: [ROUND_PAYMENT],
+                        coinjoinState: {
+                            Type: '',
+                            Events: [
+                                ...[OWN_OUTPOINT.toUpperCase(), OTHER_OUTPOINT].map(
+                                    createInputAddedEvent,
+                                ),
+                                ...outputs,
+                            ],
+                        },
+                        ...round,
+                    },
+                });
+
+            const signTransaction = ({
+                outputs,
+                round,
+                accounts = [paymentAccount(PAYMENT)],
+            }: SignTransactionParams) =>
+                transactionSigning(createPaymentRound({ outputs, round }), accounts, {
+                    ...server?.requestOptions,
+                    network: networks.bitcoin,
+                });
+
+            // Not a proven lie, see checkPayments.
+            const expectRefused = (
+                response: Awaited<ReturnType<typeof transactionSigning>>,
+                message: RegExp,
+            ) => {
+                expect(response.transactionData).toBeUndefined();
+                response.inputs.forEach(input => {
+                    expect(input.error?.message).toMatch(message);
+                    expect(input.error).not.toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+                });
+            };
+
+            it('accepts the registered payment output', async () => {
+                const externalAmounts: number[][] = [];
+                server?.addListener('test-request', ({ url, data, resolve }) => {
+                    if (url.endsWith('/update-liquidity-clue')) {
+                        externalAmounts.push(data.ExternalAmounts);
+                    }
+                    resolve();
+                });
+
+                const response = await signTransaction({ outputs: [OWN_CHANGE, PAYEE, EXTERNAL] });
+
+                expect(response.transactionData?.outputs).toHaveLength(3);
+                response.inputs.forEach(input => {
+                    expect(input.error).toBeUndefined();
+                });
+                // neither own change nor own payment is a liquidity clue
+                expect(externalAmounts).toEqual([[30000]]);
+            });
+
+            it('accepts a round with the payment output only', async () => {
+                const response = await signTransaction({
+                    outputs: [PAYEE, EXTERNAL],
+                    round: { addresses: [] },
+                });
+
+                expect(response.transactionData).toBeDefined();
+                response.inputs.forEach(input => {
+                    expect(input.error).toBeUndefined();
+                });
+            });
+
+            // The coordinator accepted the payment output, it may merge it only with outputs of
+            // the same script.
+            it.each([
+                ['pending', PAYMENT],
+                ['cancelled during the round', { ...PAYMENT, isCancelled: true }],
+            ])(
+                'stops on a lie when the output of a registered payment is missing (%s)',
+                async (_, payment) => {
+                    const response = await signTransaction({
+                        outputs: [OWN_CHANGE, EXTERNAL],
+                        accounts: [paymentAccount(payment)],
+                    });
+
+                    expect(response.transactionData).toBeUndefined();
+                    response.inputs.forEach(input => {
+                        expect(input.error).toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+                        expect(input.error?.message).toMatch(/Missing payment output/);
+                    });
+                },
+            );
+
+            it('refuses when the payment output amount differs', async () => {
+                const response = await signTransaction({
+                    outputs: [OWN_CHANGE, outputAdded(PAYEE_SCRIPT, PAYMENT.amount + 1)],
+                });
+
+                expectRefused(response, /Payment output amount differs/);
+            });
+
+            it('refuses when the anchor is not among own inputs', async () => {
+                const anchor = `${'ff'.repeat(32)}00000000`;
+                const response = await signTransaction({
+                    outputs: [OWN_CHANGE, PAYEE, EXTERNAL],
+                    round: { payments: [{ ...ROUND_PAYMENT, anchor }] },
+                    accounts: [paymentAccount({ ...PAYMENT, anchor })],
+                });
+
+                expectRefused(response, /Missing payment anchor/);
+            });
+
+            it.each([
+                ['cancelled', paymentAccount({ ...PAYMENT, isCancelled: true })],
+                ['removed', paymentAccount(undefined)],
+                ['edited', paymentAccount({ ...PAYMENT, amount: PAYMENT.amount + 1000 })],
+                ['replaced', paymentAccount({ ...PAYMENT, id: 'payment-2' })],
+                ['blocked', paymentAccount(PAYMENT, [PAYMENT.id])],
+            ])('refuses when the payment was %s during the round', async (_, account) => {
+                const response = await signTransaction({
+                    outputs: [OWN_CHANGE, PAYEE, EXTERNAL],
+                    accounts: [account],
+                });
+
+                expectRefused(response, /Payment changed before signing/);
+            });
+
+            it.each([
+                ['pending', PAYMENT],
+                ['cancelled', { ...PAYMENT, isCancelled: true }],
+            ])(
+                'refuses the output of a %s payment that was not registered in the round',
+                async (_, payment) => {
+                    const response = await signTransaction({
+                        outputs: [OWN_CHANGE, PAYEE, EXTERNAL],
+                        round: { payments: [] },
+                        accounts: [paymentAccount(payment)],
+                    });
+
+                    expectRefused(response, /Unexpected payment output/);
+                },
+            );
+
+            it('accepts other outputs to the payee', async () => {
+                const response = await signTransaction({
+                    outputs: [OWN_CHANGE, outputAdded(PAYEE_SCRIPT, PAYMENT.amount + 1)],
+                    round: { payments: [] },
+                });
+
+                expect(response.transactionData).toBeDefined();
+
+                // round without any payment of ours
+                const response2 = await signTransaction({
+                    outputs: [OWN_CHANGE, PAYEE, EXTERNAL],
+                    round: { payments: [] },
+                    accounts: [paymentAccount(undefined)],
+                });
+
+                expect(response2.transactionData).toBeDefined();
+            });
+
+            it('accepts the payment of one account to the payee of another account without its anchor in the round', async () => {
+                // account-B pays the same script and amount, its anchor is not in the round, so
+                // the signer of account-B does not credit the output of account-A.
+                const otherAnchor = `${'ee'.repeat(32)}00000000`;
+                const round = createCoinjoinRound(
+                    [
+                        createInput('account-A', OWN_OUTPOINT, CONFIRMED),
+                        createInput('account-B', ANOTHER_OUTPOINT, CONFIRMED),
+                    ],
+                    {
+                        ...server?.requestOptions,
+                        round: {
+                            phase: 3,
+                            verifiedInputs: [
+                                `${'0'.repeat(64)}:1`,
+                                `${'0'.repeat(64)}:2`,
+                                VERIFIED_INPUTS[1]!,
+                            ],
+                            addresses: [OWN_OUTPUT],
+                            payments: [ROUND_PAYMENT],
+                            coinjoinState: {
+                                Type: '',
+                                Events: [
+                                    ...[
+                                        OWN_OUTPOINT.toUpperCase(),
+                                        OTHER_OUTPOINT,
+                                        ANOTHER_OUTPOINT,
+                                    ].map(createInputAddedEvent),
+                                    OWN_CHANGE,
+                                    PAYEE,
+                                    EXTERNAL,
+                                ],
+                            },
+                        },
+                    },
+                );
+
+                const response = await transactionSigning(
+                    round,
+                    [
+                        paymentAccount(PAYMENT),
+                        paymentAccount(
+                            { ...PAYMENT, id: 'payment-2', anchor: otherAnchor },
+                            [],
+                            'account-B',
+                        ),
+                    ],
+                    { ...server?.requestOptions, network: networks.bitcoin },
+                );
+
+                expect(response.transactionData).toBeDefined();
+                response.inputs.forEach(input => {
+                    expect(input.error).toBeUndefined();
+                });
+            });
+
+            it.each([
+                // The coordinator merges outputs with the same script (see mergePubkeys).
+                ['drops the own change output for a second payee output', [PAYEE, PAYEE, EXTERNAL]],
+                [
+                    'underpays the own change output and drops the payment output',
+                    [outputAdded(OWN_OUTPUT.scriptPubKey, OWN_OUTPUT.amount - 1), EXTERNAL],
+                ],
+            ])(
+                'stops on a lie before the payment is checked: the coordinator %s',
+                async (_, outputs) => {
+                    const response = await signTransaction({ outputs });
+
+                    expect(response.transactionData).toBeUndefined();
+                    response.inputs.forEach(input => {
+                        expect(input.error).toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
+                        expect(input.error?.message).toMatch(
+                            /1 own outputs missing or with a lower amount/,
+                        );
+                    });
+                },
+            );
+
+            it('leaves out the payment of an account whose inputs failed', async () => {
+                // account-A registered its payment, then a change output of account-A failed and
+                // its input left the round (see outputRegistration). account-B signs alone, the
+                // input of account-A stays in the transaction as of another participant.
+                const FAILED_ANCHOR = ANOTHER_OUTPOINT;
+                const otherAccount = paymentAccount(undefined, [], 'account-B');
+                const round = createCoinjoinRound(
+                    [createInput('account-B', OWN_OUTPOINT, CONFIRMED)],
+                    {
+                        ...server?.requestOptions,
+                        round: {
+                            phase: 3,
+                            verifiedInputs: [
+                                `${'0'.repeat(64)}:1`,
+                                `${'0'.repeat(64)}:2`,
+                                VERIFIED_INPUTS[1]!,
+                            ],
+                            addresses: [{ ...OWN_OUTPUT, accountKey: 'account-B' }],
+                            payments: [{ ...ROUND_PAYMENT, anchor: FAILED_ANCHOR }],
+                            coinjoinState: {
+                                Type: '',
+                                Events: [
+                                    ...[
+                                        OWN_OUTPOINT.toUpperCase(),
+                                        OTHER_OUTPOINT,
+                                        FAILED_ANCHOR,
+                                    ].map(createInputAddedEvent),
+                                    OWN_CHANGE,
+                                    PAYEE,
+                                    EXTERNAL,
+                                ],
+                            },
+                        },
+                    },
+                );
+
+                const response = await transactionSigning(
+                    round,
+                    [paymentAccount({ ...PAYMENT, anchor: FAILED_ANCHOR }), otherAccount],
+                    { ...server?.requestOptions, network: networks.bitcoin },
+                );
+
+                response.inputs.forEach(input => {
+                    expect(input.error).toBeUndefined();
+                });
+                expect(response.transactionData?.inputs).toHaveLength(3);
+                // no attempt to store for account-A, its inputs do not sign
+                expect(round.getRequest()).toMatchObject({ type: 'signature', payments: [] });
             });
         });
     });

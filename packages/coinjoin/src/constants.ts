@@ -80,3 +80,13 @@ export const COORDINATOR_FEE_RATE_FALLBACK = 0.003;
 export const MIN_ALLOWED_AMOUNT_FALLBACK = 5000;
 export const MAX_ALLOWED_AMOUNT_FALLBACK = 134375000000;
 export const MINING_FEE_RATE_FALLBACK = 2000;
+
+// Smallest payment amount, as in WalletWasabi PaymentBatch.
+export const COINJOIN_PAYMENT_MIN_AMOUNT = 10000;
+
+// Most inputs funding a payment, as WalletWasabi CoinJoinCoinSelector.MaxInputsRegistrableByWallet.
+export const COINJOIN_PAYMENT_MAX_INPUTS = 10;
+
+// trezor-firmware CoinJoinApprover.MIN_REGISTRABLE_OUTPUT_AMOUNT. The signer accepts this amount, or
+// the round's minimum input amount if lower, plus the mining fee for one output as an extra fee.
+export const SIGNER_MIN_REGISTRABLE_OUTPUT_AMOUNT = 5000;

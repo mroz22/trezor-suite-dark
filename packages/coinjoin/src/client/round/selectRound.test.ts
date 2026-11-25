@@ -8,7 +8,8 @@ import {
     createStatusRound,
 } from '../../__fixtures__/round.fixture';
 import { ROUND_SELECTION_MAX_OUTPUTS } from '../../constants';
-import { SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
+import { RoundPhase, SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
+import type { AccountPayment } from '../../types/account';
 import type { AliceGenerator } from '../../types/alice';
 import type { CoinjoinRoundParameters, Round } from '../../types/coordinator';
 import type { CoinjoinPrisonInmate } from '../../types/prison';
@@ -20,6 +21,7 @@ import {
     getAccountCandidates,
     getRoundCandidates,
     getUnregisteredAccounts,
+    selectInputsForPayment,
     selectInputsForRound,
     selectRound,
 } from './selectRound';
@@ -670,6 +672,8 @@ describe('selectRound', () => {
 
         const result = await selectInputsForRound({
             aliceGenerator,
+            accounts: [],
+            statusRounds: [],
             roundCandidates: [
                 createCoinjoinRound([], {
                     ...server?.requestOptions,
@@ -719,6 +723,8 @@ describe('selectRound', () => {
 
         const result = await selectInputsForRound({
             aliceGenerator,
+            accounts: [],
+            statusRounds: [],
             roundCandidates: [
                 createCoinjoinRound([], {
                     ...server?.requestOptions,
@@ -771,6 +777,8 @@ describe('selectRound', () => {
 
         const result = await selectInputsForRound({
             aliceGenerator,
+            accounts: [],
+            statusRounds: [],
             roundCandidates: [
                 createCoinjoinRound([], {
                     ...server?.requestOptions,
@@ -806,6 +814,8 @@ describe('selectRound', () => {
 
         const result = await selectInputsForRound({
             aliceGenerator,
+            accounts: [],
+            statusRounds: [],
             roundCandidates: [
                 createCoinjoinRound([], {
                     ...server?.requestOptions,
@@ -844,6 +854,8 @@ describe('selectRound', () => {
 
         const result = await selectInputsForRound({
             aliceGenerator,
+            accounts: [],
+            statusRounds: [],
             roundCandidates: [
                 createCoinjoinRound([], {
                     ...server?.requestOptions,
@@ -1186,5 +1198,648 @@ describe('selectRound', () => {
             options: server?.requestOptions,
         });
         expect(result4).toBeUndefined();
+    });
+});
+
+describe('selectRound with payment', () => {
+    let server: Awaited<ReturnType<typeof createServer>>;
+
+    const roundGenerator: CoinjoinRoundGenerator = (...args) => new CoinjoinRound(...args);
+    const aliceGenerator: AliceGenerator = (...args) => new Alice(...args);
+    const prison = new CoinjoinPrison();
+
+    // 2 sat/vB, no coordination fee, minimum input and output amounts 5000
+    const ROUND_PARAMETERS: Partial<CoinjoinRoundParameters> = {
+        MiningFeeRate: 2000,
+        CoordinationFeeRate: { Rate: 0, PlebsDontPayThreshold: 1000000 },
+        MaxSuggestedAmount: 10000000,
+    };
+
+    const PAYEE_SCRIPT = '0 b586ae30647c6ab84aa1a285d505155711509914';
+
+    // amount 100000, cost of the payment output 100062
+    const PAYMENT: AccountPayment = {
+        id: 'payment-1',
+        address: 'bc1qkkr2uvry034tsj4p52za2pg42ug4pxg5qfxyfa',
+        amount: 100000,
+        anchor: 'a0',
+        isCancelled: false,
+        scriptType: 'P2WPKH',
+        scriptPubKey: PAYEE_SCRIPT,
+        scriptPubKeyHex: '0014b586ae30647c6ab84aa1a285d505155711509914',
+        outputSize: 31,
+    };
+
+    const utxo = (outpoint: string, amount: number, anonymityLevel = 10) => ({
+        path: 'm/1',
+        address: '',
+        scriptPubKey: '',
+        outpoint,
+        amount,
+        anonymityLevel,
+    });
+
+    type PaymentAccountParams = {
+        utxos: ReturnType<typeof utxo>[];
+        payment?: AccountPayment;
+        blockedPaymentIds?: string[];
+    };
+
+    const paymentAccount = ({
+        utxos,
+        payment = PAYMENT,
+        blockedPaymentIds = [],
+    }: PaymentAccountParams) => ({
+        ...ACCOUNT,
+        accountKey: 'account-P',
+        targetAnonymity: 5,
+        maxFeePerKvbyte: 200000,
+        maxCoordinatorFeeRate: 0.003,
+        blameOf: null,
+        payment,
+        blockedPaymentIds,
+        utxos,
+    });
+
+    const paymentRound = (Id: string, roundParameters?: Partial<CoinjoinRoundParameters>) =>
+        createCoinjoinRound([], {
+            ...server?.requestOptions,
+            statusRound: { Id },
+            roundParameters: { ...ROUND_PARAMETERS, ...roundParameters },
+        });
+
+    type MiddlewareRequest = { url: string; outpoints: string[] };
+
+    // record middleware requests, select-inputs-for-round returns given indices of the sent utxos
+    const mockMiddleware = (getIndices: (outpoints: string[]) => number[] = () => []) => {
+        const requests: MiddlewareRequest[] = [];
+        server?.addListener('test-request', ({ url, data, resolve }) => {
+            if (url.endsWith('/select-inputs-for-round')) {
+                const outpoints = data.Utxos.map((u: { Outpoint: string }) => u.Outpoint);
+                requests.push({ url, outpoints });
+                resolve({ Indices: getIndices(outpoints) });
+            }
+            if (url.endsWith('/get-liquidity-clue')) {
+                requests.push({ url, outpoints: [] });
+            }
+            resolve();
+        });
+
+        return requests;
+    };
+
+    beforeAll(async () => {
+        server = await createServer();
+    });
+
+    beforeEach(() => {
+        prison.inmates = [];
+        server?.removeAllListeners('test-request');
+    });
+
+    afterAll(() => {
+        server?.close();
+    });
+
+    it('selectInputsForPayment: anchor and the smallest sufficient private coins', () => {
+        const { roundParameters } = paymentRound('01');
+
+        const utxos = [
+            utxo('a5', 300000, 1), // not private
+            utxo('a1', 50000),
+            utxo('a0', 60000), // anchor
+            utxo('a2', 30000),
+            utxo('a3', 40000000), // above MaxSuggestedAmount
+        ];
+        const account = paymentAccount({ utxos });
+        // anchor 59884 + 49884 covers 100062, the remainder 9706 is enough for a change output
+        expect(selectInputsForPayment(account, roundParameters)).toEqual([2, 1]);
+
+        // not funded without the anchor
+        expect(
+            selectInputsForPayment(
+                paymentAccount({ utxos: utxos.filter(u => u.outpoint !== 'a0') }),
+                roundParameters,
+            ),
+        ).toEqual([]);
+
+        // not funded by private coins only
+        expect(
+            selectInputsForPayment(
+                paymentAccount({ utxos: [utxo('a0', 60000), utxo('a5', 300000, 1)] }),
+                roundParameters,
+            ),
+        ).toEqual([]);
+
+        // coins above AllowedInputAmounts.Max are not used
+        expect(
+            selectInputsForPayment(account, {
+                ...roundParameters,
+                AllowedInputAmounts: { Min: 5000, Max: 55000 },
+            }),
+        ).toEqual([]);
+
+        // cancelled or blocked payment
+        expect(
+            selectInputsForPayment(
+                { ...account, payment: { ...PAYMENT, isCancelled: true } },
+                roundParameters,
+            ),
+        ).toEqual([]);
+        expect(
+            selectInputsForPayment(
+                { ...account, blockedPaymentIds: [PAYMENT.id] },
+                roundParameters,
+            ),
+        ).toEqual([]);
+    });
+
+    it('selectInputsForPayment: at most 10 inputs', () => {
+        const { roundParameters } = paymentRound('01');
+        const smallCoins = (count: number) =>
+            Array.from({ length: count }, (_, i) => utxo(`b${i}`, 11116)); // 11000 each
+
+        // anchor 11000 + 9 coins: 110000 = cost 100062 + 9938
+        expect(
+            selectInputsForPayment(
+                paymentAccount({ utxos: [utxo('a0', 11116), ...smallCoins(9)] }),
+                roundParameters,
+            ),
+        ).toHaveLength(10);
+        // anchor 10000 + 9 coins of 10000 do not cover 100062
+        expect(
+            selectInputsForPayment(
+                paymentAccount({
+                    utxos: [
+                        utxo('a0', 10116),
+                        ...Array.from({ length: 20 }, (_, i) => utxo(`b${i}`, 10116)),
+                    ],
+                }),
+                roundParameters,
+            ),
+        ).toEqual([]);
+    });
+
+    it('selectInputsForPayment: remainder between fee and change adds a coin', () => {
+        const { roundParameters } = paymentRound('01', {
+            AllowedInputAmounts: { Min: 1000, Max: 134375000000 },
+            AllowedOutputAmounts: { Min: 10000, Max: 134375000000 },
+        });
+        // remainder up to 1086 is a fee, from 10086 a change output
+        const account = paymentAccount({
+            utxos: [utxo('a0', 60000), utxo('a1', 42000), utxo('a2', 9000), utxo('a3', 20000)],
+        });
+
+        // 59884 + 41884 leaves 1706, the smallest coin covering the change is 8884
+        expect(selectInputsForPayment(account, roundParameters)).toEqual([0, 1, 2]);
+    });
+
+    it('all-private account pays without the middleware', async () => {
+        const requests = mockMiddleware();
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [paymentRound('01')],
+            accountCandidates: [
+                paymentAccount({
+                    utxos: [utxo('a1', 50000), utxo('a0', 60000), utxo('a2', 30000)],
+                }),
+            ],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+
+        expect(requests).toEqual([]);
+        expect(result).toMatchObject({
+            id: '01',
+            paymentAccountKeys: ['account-P'],
+            inputs: [{ outpoint: 'a0' }, { outpoint: 'a1' }],
+        });
+    });
+
+    it('unfunded payment falls back to the middleware without the anchor', async () => {
+        // select the last of the sent utxos
+        const requests = mockMiddleware(outpoints => [outpoints.length - 1]);
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [paymentRound('01')],
+            accountCandidates: [
+                paymentAccount({
+                    utxos: [utxo('a1', 50000, 1), utxo('a0', 60000), utxo('a2', 30000, 1)],
+                }),
+            ],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+
+        expect(requests.find(r => r.url.endsWith('/select-inputs-for-round'))).toMatchObject({
+            outpoints: ['a1', 'a2'],
+        });
+        expect(result).toMatchObject({ paymentAccountKeys: [], inputs: [{ outpoint: 'a2' }] });
+    });
+
+    it('anchor that is not private is held back from the middleware', async () => {
+        const requests = mockMiddleware(outpoints => outpoints.map((_, i) => i));
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [paymentRound('01')],
+            accountCandidates: [
+                paymentAccount({ utxos: [utxo('a0', 60000, 1), utxo('a1', 200000)] }),
+            ],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+
+        expect(requests.find(r => r.url.endsWith('/select-inputs-for-round'))).toMatchObject({
+            outpoints: ['a1'],
+        });
+        expect(result).toMatchObject({ paymentAccountKeys: [], inputs: [{ outpoint: 'a1' }] });
+    });
+
+    it('detained anchor is not used', async () => {
+        const requests = mockMiddleware(outpoints => outpoints.map((_, i) => i));
+        prison.detain({ accountKey: 'account-P', outpoint: 'a0' });
+
+        const result = await selectRound({
+            roundGenerator,
+            aliceGenerator,
+            accounts: [paymentAccount({ utxos: [utxo('a0', 60000), utxo('a1', 200000)] })],
+            statusRounds: [DEFAULT_ROUND],
+            coinjoinRounds: [],
+            prison,
+            options: server?.requestOptions,
+        });
+
+        expect(requests.find(r => r.url.endsWith('/select-inputs-for-round'))).toMatchObject({
+            outpoints: ['a1'],
+        });
+        expect(result).toMatchObject({ paymentAccountKeys: [], inputs: [{ outpoint: 'a1' }] });
+    });
+
+    it('blocked payment is not made and its anchor is held back', async () => {
+        const requests = mockMiddleware(outpoints => outpoints.map((_, i) => i));
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [paymentRound('01')],
+            accountCandidates: [
+                paymentAccount({
+                    utxos: [utxo('a0', 60000), utxo('a1', 200000)],
+                    blockedPaymentIds: [PAYMENT.id],
+                }),
+            ],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+
+        expect(requests.find(r => r.url.endsWith('/select-inputs-for-round'))).toMatchObject({
+            outpoints: ['a1'],
+        });
+        expect(result).toMatchObject({ paymentAccountKeys: [], inputs: [{ outpoint: 'a1' }] });
+    });
+
+    it.each([
+        ['payee type is not allowed', { AllowedOutputTypes: ['Taproot' as const] }],
+        // WalletWasabi coordinators send NBitcoin ScriptType values, Taproot is 7
+        ['payee type value is not allowed', { AllowedOutputTypes: [7] }],
+        ['account type value is not allowed', { AllowedInputTypes: [4] }],
+        ['amount is below the minimum output', { AllowedOutputAmounts: { Min: 100001, Max: 1e9 } }],
+        ['payment output exceeds the credential maximum', { MaxAmountCredentialValue: 100061 }],
+    ])('round where the %s is not used to pay', async (_, roundParameters) => {
+        mockMiddleware();
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [paymentRound('01', roundParameters), paymentRound('02')],
+            accountCandidates: [paymentAccount({ utxos: [utxo('a1', 50000), utxo('a0', 60000)] })],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+
+        expect(result).toMatchObject({ id: '02', paymentAccountKeys: ['account-P'] });
+    });
+
+    it('round with NBitcoin ScriptType values is used to pay', async () => {
+        mockMiddleware();
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [
+                // P2WPKH is 4, Taproot 7
+                paymentRound('01', { AllowedInputTypes: [4, 7], AllowedOutputTypes: [4, 7] }),
+            ],
+            accountCandidates: [paymentAccount({ utxos: [utxo('a1', 50000), utxo('a0', 60000)] })],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+
+        expect(result).toMatchObject({ id: '01', paymentAccountKeys: ['account-P'] });
+    });
+
+    it('payee script registered in a round is not used', async () => {
+        const statusRound = (Phase: Round['Phase'], ScriptPubKey: string): Round => ({
+            ...DEFAULT_ROUND,
+            Id: 'ff',
+            Phase,
+            CoinjoinState: {
+                Type: '',
+                Events: [{ Type: 'OutputAdded', Output: { ScriptPubKey, Value: 100000 } }],
+            },
+        });
+        const select = (statusRounds: Round[]) =>
+            selectInputsForRound({
+                aliceGenerator,
+                roundCandidates: [paymentRound('01')],
+                accountCandidates: [
+                    paymentAccount({ utxos: [utxo('a1', 50000), utxo('a0', 60000)] }),
+                ],
+                accounts: [],
+                statusRounds,
+                options: server?.requestOptions,
+            });
+
+        const requests = mockMiddleware();
+        // output of another round in uppercase hex
+        expect(
+            await select([statusRound(RoundPhase.OutputRegistration, PAYEE_SCRIPT.toUpperCase())]),
+        ).toBeUndefined();
+        expect(requests.filter(r => r.url.endsWith('/select-inputs-for-round'))).toHaveLength(1);
+
+        // input of any round
+        expect(
+            await select([
+                {
+                    ...DEFAULT_ROUND,
+                    Phase: RoundPhase.Ended,
+                    CoinjoinState: {
+                        Type: '',
+                        Events: [
+                            {
+                                Type: 'InputAdded',
+                                Coin: {
+                                    Outpoint: 'ff',
+                                    TxOut: { ScriptPubKey: PAYEE_SCRIPT, Value: 100000 },
+                                },
+                                OwnershipProof: '',
+                            },
+                        ],
+                    },
+                },
+            ]),
+        ).toBeUndefined();
+
+        // output of an ended round
+        expect(await select([statusRound(RoundPhase.Ended, PAYEE_SCRIPT)])).toMatchObject({
+            paymentAccountKeys: ['account-P'],
+        });
+    });
+
+    it('round funding the payment wins over a round with more inputs', async () => {
+        const requests = mockMiddleware(outpoints => outpoints.map((_, i) => i));
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [
+                paymentRound('01', { AllowedOutputTypes: ['Taproot'] }),
+                paymentRound('02'),
+            ],
+            accountCandidates: [
+                paymentAccount({
+                    utxos: [
+                        utxo('a1', 50000),
+                        utxo('a0', 60000),
+                        utxo('b1', 20000, 1),
+                        utxo('b2', 20000, 1),
+                        utxo('b3', 20000, 1),
+                        utxo('b4', 20000, 1),
+                    ],
+                }),
+            ],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+
+        // the middleware selected 5 inputs in round 01
+        expect(requests.find(r => r.url.endsWith('/select-inputs-for-round'))).toMatchObject({
+            outpoints: ['a1', 'b1', 'b2', 'b3', 'b4'],
+        });
+        expect(result).toMatchObject({
+            id: '02',
+            paymentAccountKeys: ['account-P'],
+            inputs: [{ outpoint: 'a0' }, { outpoint: 'a1' }],
+        });
+    });
+
+    it('cancelled payment mixes the anchor without the payment', async () => {
+        mockMiddleware(outpoints => (outpoints.includes('b1') ? [0] : []));
+        const payment = { ...PAYMENT, isCancelled: true };
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [paymentRound('01')],
+            accountCandidates: [
+                paymentAccount({ utxos: [utxo('b1', 20000, 1), utxo('a0', 60000)], payment }),
+            ],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+        expect(result).toMatchObject({
+            paymentAccountKeys: [],
+            inputs: [{ outpoint: 'b1' }, { outpoint: 'a0' }],
+        });
+
+        // all-private account, the middleware selects nothing
+        const result2 = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [paymentRound('02')],
+            accountCandidates: [
+                paymentAccount({ utxos: [utxo('a1', 50000), utxo('a0', 60000)], payment }),
+            ],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+        expect(result2).toMatchObject({ paymentAccountKeys: [], inputs: [{ outpoint: 'a0' }] });
+    });
+
+    describe('blame round', () => {
+        const blameOf = '1'.repeat(64);
+        // input of another participant in the failed round
+        const OTHER_SIGNED_OUTPOINT = 'ff';
+
+        type SelectBlameRoundParams = {
+            // the failed round left the inputs it signed, see endedRound
+            isFailedRoundKnown?: boolean;
+            roundParameters?: Partial<CoinjoinRoundParameters>;
+            blamePrison?: CoinjoinPrison;
+        };
+
+        // re-register the given utxos of the payment account in a blame round
+        const selectBlameRound = (
+            blameUtxos: ReturnType<typeof utxo>[],
+            {
+                isFailedRoundKnown = true,
+                roundParameters,
+                blamePrison = new CoinjoinPrison(),
+            }: SelectBlameRoundParams = {},
+        ) => {
+            const inmates = blameUtxos.map(({ outpoint }) => ({
+                accountKey: 'account-P',
+                outpoint,
+            }));
+            if (isFailedRoundKnown) {
+                blamePrison.detainForBlameRound(inmates, blameOf, [
+                    ...inmates.map(({ outpoint }) => outpoint),
+                    OTHER_SIGNED_OUTPOINT,
+                ]);
+            } else {
+                // as restored after a restart
+                inmates.forEach(inmate =>
+                    blamePrison.detain(inmate, { roundId: blameOf, errorCode: 'blameOf' }),
+                );
+            }
+
+            return selectInputsForRound({
+                aliceGenerator,
+                roundCandidates: [
+                    createCoinjoinRound([], {
+                        ...server?.requestOptions,
+                        statusRound: { Id: '02', BlameOf: blameOf },
+                        roundParameters: { ...ROUND_PARAMETERS, ...roundParameters },
+                        prison: blamePrison,
+                    }),
+                ],
+                accountCandidates: [
+                    {
+                        ...paymentAccount({ utxos: [] }),
+                        blameOf: { [blameOf]: blameUtxos },
+                    },
+                ],
+                accounts: [],
+                statusRounds: [],
+                options: server?.requestOptions,
+            });
+        };
+
+        beforeEach(() => {
+            mockMiddleware();
+        });
+
+        it('repeats the payment when the anchor is re-registered', async () => {
+            expect(await selectBlameRound([utxo('a0', 60000), utxo('a1', 50000)])).toMatchObject({
+                paymentAccountKeys: ['account-P'],
+                inputs: [{ outpoint: 'a0' }, { outpoint: 'a1' }],
+                blameOfOutpoints: ['a0', 'a1', OTHER_SIGNED_OUTPOINT],
+            });
+        });
+
+        it('skips a blame round with fees above the account limit and releases the coins', async () => {
+            const blamePrison = new CoinjoinPrison();
+            const result = await selectBlameRound([utxo('a0', 60000), utxo('a1', 50000)], {
+                roundParameters: { MiningFeeRate: 200001 },
+                blamePrison,
+            });
+
+            expect(result).toBeUndefined();
+            // the coins may join a regular round, without waiting for the blame round
+            expect(blamePrison.inmates).toEqual([]);
+        });
+
+        it('skips a blame round of an unknown failed round and releases the coins', async () => {
+            const blamePrison = new CoinjoinPrison();
+            const result = await selectBlameRound([utxo('a0', 60000), utxo('a1', 50000)], {
+                isFailedRoundKnown: false,
+                blamePrison,
+            });
+
+            expect(result).toBeUndefined();
+            expect(blamePrison.inmates).toEqual([]);
+        });
+
+        it.each([
+            ['without the anchor', [utxo('a1', 50000), utxo('a2', 60000)]],
+            // the failed round mixed the anchor before the payment was made
+            ['with coins below the anonymity target', [utxo('a0', 60000), utxo('b1', 50000, 1)]],
+            ['with coins that do not fund the payment', [utxo('a0', 60000), utxo('a1', 30000)]],
+        ])('re-registers the coins without the payment %s', async (_, blameUtxos) => {
+            expect(await selectBlameRound(blameUtxos)).toMatchObject({
+                paymentAccountKeys: [],
+                inputs: blameUtxos.map(({ outpoint }) => ({ outpoint })),
+            });
+        });
+    });
+
+    it('two accounts paying the same script do not pay in the same round', async () => {
+        const requests = mockMiddleware();
+        const otherAccount = {
+            ...paymentAccount({ utxos: [utxo('c1', 50000), utxo('c0', 60000)] }),
+            accountKey: 'account-Q',
+            payment: { ...PAYMENT, id: 'payment-2', anchor: 'c0' },
+        };
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [paymentRound('01')],
+            accountCandidates: [
+                paymentAccount({ utxos: [utxo('a1', 50000), utxo('a0', 60000)] }),
+                otherAccount,
+            ],
+            accounts: [],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+
+        expect(result).toMatchObject({
+            paymentAccountKeys: ['account-P'],
+            inputs: [{ outpoint: 'a0' }, { outpoint: 'a1' }],
+        });
+        // the other account falls back to the middleware without its anchor
+        expect(requests.filter(r => r.url.endsWith('/select-inputs-for-round'))).toEqual([
+            expect.objectContaining({ outpoints: ['c1'] }),
+        ]);
+    });
+
+    it('an account does not pay a script that another account already pays in the round', async () => {
+        const requests = mockMiddleware(outpoints => outpoints.map((_, i) => i));
+        const payingUtxos = [utxo('a1', 50000), utxo('a0', 60000)];
+        const payingAccount = paymentAccount({ utxos: payingUtxos });
+        const otherAccount = {
+            ...paymentAccount({ utxos: [utxo('c1', 50000), utxo('c0', 60000)] }),
+            accountKey: 'account-Q',
+            payment: { ...PAYMENT, id: 'payment-2', anchor: 'c0' },
+        };
+        // account-P joined the round to pay in an earlier selection, the round is still in input
+        // registration
+        const round = paymentRound('01');
+        round.inputs.push(...payingUtxos.map(u => new Alice('account-P', 'Taproot', u)));
+        round.paymentAccountKeys.push('account-P');
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [round],
+            accountCandidates: [otherAccount],
+            accounts: [payingAccount, otherAccount],
+            statusRounds: [],
+            options: server?.requestOptions,
+        });
+
+        expect(result).toMatchObject({
+            paymentAccountKeys: ['account-P'],
+            inputs: [{ outpoint: 'a1' }, { outpoint: 'a0' }, { outpoint: 'c1' }],
+        });
+        // the other account mixes without its anchor
+        expect(requests.filter(r => r.url.endsWith('/select-inputs-for-round'))).toEqual([
+            expect.objectContaining({ outpoints: ['c1'] }),
+        ]);
     });
 });

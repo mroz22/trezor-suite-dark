@@ -13,6 +13,7 @@ import {
     sortInputs,
     sortOutputs,
 } from '../../utils/coordinatorUtils';
+import { getPendingPayment, getSigningPayments } from '../../utils/paymentUtils';
 import {
     compareOutpoint,
     getRoundEvents,
@@ -25,8 +26,81 @@ import * as coordinator from '../coordinator';
 import * as middleware from '../middleware';
 import { verifyRoundInputs } from './verifyRoundInputs';
 
+// Check the payment outputs against the transaction: a signer that supports coinjoin payments
+// credits a payment output with the exact script and amount in a transaction that spends the
+// anchor of the paying account, so such an output must be in that transaction only if this client
+// registered it. Only accounts that sign are checked, a payment of an account whose output
+// registration failed is not made in this round.
+// The coordinator accepted the registered payment output and merges outputs only by their script,
+// so a missing payee script is a proven lie. The other errors are not: an exact amount depends on
+// the fee rounding of the coordinator, and another participant may pay the same script.
+const checkPayments = (
+    round: CoinjoinRoundShape,
+    accounts: Account[],
+    outputs: CoinjoinTransactionData['outputs'],
+) => {
+    const hasOutput = (scriptPubKeyHex: string, amount: number) =>
+        outputs.some(output => output.scriptPubKey === scriptPubKeyHex && output.amount === amount);
+
+    const signingPayments = getSigningPayments(round);
+    signingPayments.forEach(registered => {
+        // Checked first, so that a payment changed during the round cannot hide the lie.
+        if (!outputs.some(output => output.scriptPubKey === registered.scriptPubKeyHex)) {
+            throw new coordinator.CoordinatorMisbehaviorError(
+                'Inconsistent data. Missing payment output.',
+            );
+        }
+
+        const account = accounts.find(a => a.accountKey === registered.accountKey);
+        const payment = account && getPendingPayment(account);
+        // The payment was cancelled, changed or removed during the round.
+        if (
+            payment?.id !== registered.paymentId ||
+            payment.address !== registered.address ||
+            payment.amount !== registered.amount ||
+            payment.anchor !== registered.anchor
+        ) {
+            throw new Error(`Payment changed before signing.`);
+        }
+
+        if (!hasOutput(registered.scriptPubKeyHex, registered.amount)) {
+            throw new Error(`Inconsistent data. Payment output amount differs.`);
+        }
+
+        const hasAnchor = round.inputs.some(
+            input =>
+                input.accountKey === registered.accountKey &&
+                compareOutpoint(input.outpoint, registered.anchor),
+        );
+        if (!hasAnchor) {
+            throw new Error(`Inconsistent data. Missing payment anchor.`);
+        }
+    });
+
+    accounts.forEach(({ accountKey, payment }) => {
+        // In a round without the anchor of the account, an identical output is foreign to the
+        // signer.
+        if (
+            !payment ||
+            signingPayments.some(registered => registered.accountKey === accountKey) ||
+            !round.inputs.some(
+                input =>
+                    input.accountKey === accountKey &&
+                    compareOutpoint(input.outpoint, payment.anchor),
+            )
+        ) {
+            return;
+        }
+
+        if (hasOutput(payment.scriptPubKeyHex, payment.amount)) {
+            throw new Error(`Inconsistent data. Unexpected payment output.`);
+        }
+    });
+};
+
 const getTransactionData = (
     round: CoinjoinRoundShape,
+    accounts: Account[],
     options: CoinjoinRoundOptions,
 ): CoinjoinTransactionData => {
     const registeredInputs = getRoundEvents('InputAdded', round.coinjoinState.Events);
@@ -35,8 +109,10 @@ const getTransactionData = (
     );
     const myInputsInRound = round.inputs;
     const myOutputsInRound = round.addresses;
+    // The payment output is own as well, a round may pay without a change output.
+    const myOutputsCount = myOutputsInRound.length + getSigningPayments(round).length;
 
-    if (!myOutputsInRound || myOutputsInRound.length < 1) {
+    if (myOutputsCount < 1) {
         throw new Error(`No registered outputs for round ${round.id}`);
     }
 
@@ -119,6 +195,8 @@ const getTransactionData = (
             };
         });
 
+    checkPayments(round, accounts, outputs);
+
     return {
         inputs,
         outputs,
@@ -134,8 +212,12 @@ const updateRawLiquidityClue = async (
 ) => {
     const result = await Promise.all(
         accounts.map(account => {
+            const paymentScripts = round.payments
+                .filter(payment => payment.accountKey === account.accountKey)
+                .map(payment => payment.scriptPubKeyHex);
             const externalAmounts = tx.outputs
                 .filter(o => !account.changeAddresses.some(addr => addr.address === o.address))
+                .filter(o => !paymentScripts.includes(o.scriptPubKey))
                 .map(o => o.amount);
 
             return middleware.updateLiquidityClue(
@@ -244,7 +326,7 @@ export const transactionSigning = async (
         const inputsWithoutWitness = round.inputs.filter(input => !input.witness);
         if (inputsWithoutWitness.length > 0) {
             round.setSessionPhase(SessionPhase.AwaitingCoinjoinTransaction);
-            const transactionData = getTransactionData(round, options);
+            const transactionData = getTransactionData(round, accounts, options);
             const liquidityClues = await updateRawLiquidityClue(
                 round,
                 accounts,

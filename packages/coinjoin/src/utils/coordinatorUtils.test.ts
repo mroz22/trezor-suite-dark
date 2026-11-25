@@ -2,6 +2,8 @@ import { networks } from '@trezor/utxo-lib';
 
 import {
     getAddressFromScriptPubKey,
+    getInputFees,
+    getMiningFee,
     getScriptPubKeyFromAddress,
     mergePubkeys,
     prefixScriptPubKey,
@@ -140,6 +142,34 @@ describe('coordinatorUtils', () => {
         ).toEqual('3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy');
     });
 
+    it('getInputFees', () => {
+        const roundParameters = {
+            MiningFeeRate: 1500,
+            CoordinationFeeRate: { Rate: 0.003, PlebsDontPayThreshold: 1000000 },
+        };
+        const params = { inputSize: 58, roundParameters, isPayingZeroCoordinationFee: false };
+
+        // The coordination fee 3001.5 is rounded down.
+        expect(getInputFees({ ...params, amount: 1000500 })).toEqual({
+            coordinatorFee: 3001,
+            miningFee: 87,
+        });
+        // Remixed input.
+        expect(
+            getInputFees({ ...params, amount: 1000500, isPayingZeroCoordinationFee: true }),
+        ).toEqual({ coordinatorFee: 0, miningFee: 87 });
+        // Amount up to the threshold.
+        expect(getInputFees({ ...params, amount: 1000000 })).toEqual({
+            coordinatorFee: 0,
+            miningFee: 87,
+        });
+        // The mining fee 46.5 for 31 vB is rounded down.
+        expect(getInputFees({ ...params, amount: 5000, inputSize: 31 })).toEqual({
+            coordinatorFee: 0,
+            miningFee: 46,
+        });
+    });
+
     it('sortOutputs', () => {
         // sorting by amount
         expect(
@@ -203,5 +233,13 @@ describe('coordinatorUtils', () => {
             { Type: 'OutputAdded', Output: { ScriptPubKey: '01', Value: 3 } },
             { Type: 'OutputAdded', Output: { ScriptPubKey: '02', Value: 1 } },
         ]);
+    });
+
+    it('getMiningFee', () => {
+        expect(getMiningFee(43, 2000)).toEqual(86);
+        expect(getMiningFee(31, 2000)).toEqual(62);
+        expect(getMiningFee(58, 1500)).toEqual(87);
+        expect(getMiningFee(31, 1500)).toEqual(46); // 46.5 rounded down
+        expect(getMiningFee(43, 0)).toEqual(1);
     });
 });

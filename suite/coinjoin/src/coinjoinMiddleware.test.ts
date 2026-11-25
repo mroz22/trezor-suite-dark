@@ -12,8 +12,11 @@ import { createTestCompositionRoot, testMocks } from '@suite-common/test-utils';
 import { asNetworkSymbol } from '@suite-common/wallet-config';
 import {
     type AccountsRootState,
+    type TransactionsRootState,
     type TransactionsState,
+    type WalletSettingsRootState,
     prepareAccountsReducer,
+    prepareWalletSettingsReducer,
     transactionsInitialState,
 } from '@suite-common/wallet-core';
 import { mockSetAccountAddMetadata } from '@suite-common/wallet-core/mocks';
@@ -22,9 +25,10 @@ import { mockWalletAccount } from '@suite-common/wallet-types/mocks';
 import '@suite-common/test-utils/globalOverrides';
 import { mockActionType, mockReducer } from '@trezor/redux-utils/mocks';
 
-import { fixtures } from './__fixtures__/coinjoinMiddleware';
+import { fixtures, spentAnchorFixture } from './__fixtures__/coinjoinMiddleware';
 import { rescanCoinjoinAccountThunk } from './coinjoinAccountActions';
 import { clientEnableFailed, clientEnableSuccess } from './coinjoinClientActions';
+import * as COINJOIN from './coinjoinConstants';
 import { coinjoinMiddleware } from './coinjoinMiddleware';
 import { coinjoinReducer } from './coinjoinReducer';
 import { type CoinjoinRootState, type SuiteOnlineRootState } from './coinjoinSelectors';
@@ -56,7 +60,13 @@ const rootReducer = combineReducers({
         }),
         coinjoin: coinjoinReducer,
         selectedAccount: selectedAccountReducer,
-        transactions: () => transactionsInitialState,
+        // Suite Dark: pay in coinjoin, payment availability reads the wallet settings and the
+        // payment sync the transactions, which a fixture may preload.
+        settings: prepareWalletSettingsReducer({
+            actionTypes: { storageLoad: mockActionType('storageLoad') },
+            reducers: { storageLoadWalletSettings: mockReducer() },
+        }),
+        transactions: (state: TransactionsState = transactionsInitialState) => state,
     }),
 });
 
@@ -67,7 +77,9 @@ type State = AccountsRootState &
     MessageSystemRootState &
     RouterRootState &
     SuiteOnlineRootState &
-    TorRootState & {
+    TorRootState &
+    TransactionsRootState &
+    WalletSettingsRootState & {
         device: Record<never, never>;
         discreetMode: { isActive: boolean };
         wallet: { transactions: TransactionsState };
@@ -214,5 +226,31 @@ describe('coinjoinMiddleware', () => {
 
             expect(backend.scanAccount).toHaveBeenCalledTimes(1);
         });
+    });
+
+    // Suite Dark: pay in coinjoin.
+    it('does not restore a session whose payment its own sync anchors anew when its account syncs', async () => {
+        const { state, action, accountKey, payment, newAnchor } = spentAnchorFixture;
+        const store = initStore(state);
+        testMocks.setTrezorConnectFixtures([{ success: true }]);
+        await CoinjoinService.createInstance({ symbol: asNetworkSymbol('btc') });
+
+        store.dispatch(action);
+
+        expect(store.getActions()).toEqual([
+            action,
+            {
+                type: COINJOIN.ACCOUNT_SET_PAYMENT,
+                payload: {
+                    accountKey,
+                    payment: {
+                        ...payment,
+                        id: expect.not.stringMatching(payment.id),
+                        anchor: newAnchor,
+                    },
+                },
+            },
+        ]);
+        expect(testMocks.getTrezorConnectMock().authorizeCoinjoin).not.toHaveBeenCalled();
     });
 });

@@ -1,7 +1,7 @@
 import { arrayDistinct, arrayShuffle, getWeakRandomId, getWeakRandomInt } from '@trezor/utils';
 
 import { SessionPhase, WabiSabiProtocolErrorCode } from '../../enums';
-import type { AccountAddress } from '../../types/account';
+import type { AccountAddress, AccountPayment } from '../../types/account';
 import type { AliceShape } from '../../types/alice';
 import * as coordinator from '../coordinator';
 import * as middleware from '../middleware';
@@ -22,18 +22,12 @@ import type { Account } from '../Account';
  * - Finally call /ready-to-sign on coordinator for each input
  */
 
-const registerOutput = async (
+const getOutputCredentialRequests = async (
     round: CoinjoinRoundShape,
-    { accountKey, changeAddresses, scriptType }: Account,
     { amountCredentials, vsizeCredentials }: Bob,
-    assignedAddresses: AccountAddress[],
-    options: CoinjoinRoundOptions,
+    { signal, middlewareUrl }: CoinjoinRoundOptions,
 ) => {
-    const { roundParameters, phaseDeadline } = round;
-    const { signal, coordinatorUrl, middlewareUrl, logger } = options;
-
-    const remainingTime = phaseDeadline - Date.now();
-    const delay = scheduleDelay(Math.floor(remainingTime * 0.8));
+    const { roundParameters } = round;
 
     const outputAmountCredentials = await middleware.getRealCredentials(
         [], // NOTE: sending empty amountToRequest **will not** create credentialToRequest object which **should not** be sent to coordinator in output-registration request
@@ -48,6 +42,29 @@ const registerOutput = async (
         round.vsizeCredentialIssuerParameters,
         roundParameters.MaxVsizeAllocationPerAlice,
         { signal, baseUrl: middlewareUrl },
+    );
+
+    return { outputAmountCredentials, outputVsizeCredentials };
+};
+
+const registerOutput = async (
+    round: CoinjoinRoundShape,
+    { accountKey, changeAddresses, scriptType }: Account,
+    bob: Bob,
+    assignedAddresses: AccountAddress[],
+    options: CoinjoinRoundOptions,
+) => {
+    const { roundParameters, phaseDeadline } = round;
+    const { signal, coordinatorUrl, logger } = options;
+    const { amountCredentials } = bob;
+
+    const remainingTime = phaseDeadline - Date.now();
+    const delay = scheduleDelay(Math.floor(remainingTime * 0.8));
+
+    const { outputAmountCredentials, outputVsizeCredentials } = await getOutputCredentialRequests(
+        round,
+        bob,
+        options,
     );
 
     const isUnassigned = (address: AccountAddress) => !assignedAddresses.includes(address);
@@ -134,6 +151,90 @@ const registerOutput = async (
     });
 };
 
+// Rejections of the payee script or the payment amount, which do not depend on the round.
+// WalletWasabi coordinators reject every script that was already an output of a coinjoin as
+// AlreadyRegisteredScript, so retrying it in a later round would fail again.
+const PAYMENT_BLOCKING_ERRORS = [
+    WabiSabiProtocolErrorCode.AlreadyRegisteredScript,
+    WabiSabiProtocolErrorCode.ScriptNotAllowed,
+    WabiSabiProtocolErrorCode.NonStandardOutput,
+    WabiSabiProtocolErrorCode.DustOutput,
+    WabiSabiProtocolErrorCode.NotEnoughFunds,
+    WabiSabiProtocolErrorCode.TooMuchFunds,
+];
+
+// Register the payment output. It is never registered with another script: if the coordinator
+// rejects it, the round fails for the inputs of the account before any signature. A rejection of
+// the payee or the amount also blocks the payment for this session.
+const registerPaymentOutput = async (
+    round: CoinjoinRoundShape,
+    account: Account,
+    bob: Bob,
+    payment: AccountPayment,
+    options: CoinjoinRoundOptions,
+) => {
+    const { signal, coordinatorUrl, logger } = options;
+
+    const remainingTime = round.phaseDeadline - Date.now();
+    const delay = scheduleDelay(Math.floor(remainingTime * 0.8));
+
+    const { outputAmountCredentials, outputVsizeCredentials } = await getOutputCredentialRequests(
+        round,
+        bob,
+        options,
+    );
+
+    try {
+        await coordinator.outputRegistration(
+            round.id,
+            payment,
+            outputAmountCredentials,
+            outputVsizeCredentials,
+            {
+                signal,
+                baseUrl: coordinatorUrl,
+                identity: getWeakRandomId(10),
+                delay,
+                deadline: round.phaseDeadline,
+            },
+        );
+    } catch (error) {
+        if (error instanceof coordinator.WabiSabiProtocolException) {
+            const { errorCode } = error;
+            const isBlocked =
+                errorCode !== undefined && PAYMENT_BLOCKING_ERRORS.includes(errorCode);
+            round.rejectedPayments.push({
+                accountKey: account.accountKey,
+                paymentId: payment.id,
+                errorCode,
+                isBlocked,
+            });
+            if (isBlocked && !account.blockedPaymentIds.includes(payment.id)) {
+                account.blockedPaymentIds.push(payment.id);
+            }
+            // Only the error code is logged, the description of the coordinator may contain the
+            // script.
+            const errorCodeKey =
+                errorCode === undefined ? 'unknown' : WabiSabiProtocolErrorCode[errorCode];
+            logger.warn(`Payment rejected: ${errorCodeKey}`);
+
+            throw new Error('Payment output rejected', { cause: error });
+        }
+
+        throw new Error('Payment output registration failed', { cause: error });
+    }
+
+    round.payments.push({
+        accountKey: account.accountKey,
+        paymentId: payment.id,
+        address: payment.address,
+        scriptPubKey: payment.scriptPubKey,
+        scriptPubKeyHex: payment.scriptPubKeyHex,
+        amount: payment.amount,
+        anchor: payment.anchor,
+    });
+};
+
 const readyToSign = (
     { id, phaseDeadline }: CoinjoinRoundShape,
     input: AliceShape,
@@ -178,13 +279,32 @@ export const outputRegistration = async (
                 if (!account) throw new Error(`Unknown account ~~${accountKey}~~`);
 
                 const assignedAddresses: AccountAddress[] = [];
+                // Once the account failed, a delayed payment registration is not sent: it would
+                // show the payee together with the anchor in a round the account does not sign.
+                const paymentAbort = new AbortController();
+                const paymentOptions = {
+                    ...options,
+                    signal: AbortSignal.any([options.signal, paymentAbort.signal]),
+                };
 
+                // The payment output is registered together with the change outputs, in random order.
                 // A failed registration fails only the inputs of the account.
                 return Promise.all(
                     arrayShuffle(outputs, { randomInt: getWeakRandomInt }).map(output =>
-                        registerOutput(round, account, output, assignedAddresses, options),
+                        output.payment
+                            ? registerPaymentOutput(
+                                  round,
+                                  account,
+                                  output,
+                                  output.payment,
+                                  paymentOptions,
+                              )
+                            : registerOutput(round, account, output, assignedAddresses, options),
                     ),
-                ).catch(error => setAccountError(round, accountKey, error, options));
+                ).catch(error => {
+                    paymentAbort.abort();
+                    setAccountError(round, accountKey, error, options);
+                });
             }),
         );
 

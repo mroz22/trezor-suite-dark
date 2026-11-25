@@ -39,6 +39,10 @@ import { arrayDistinct, arrayToDictionary, promiseAllSequence } from '@trezor/ut
 
 import * as COINJOIN from './coinjoinConstants';
 import {
+    blockRejectedCoinjoinPaymentsThunk,
+    recordCoinjoinPaymentAttemptsThunk,
+} from './coinjoinPaymentActions';
+import {
     type CoinjoinRootState,
     selectCoinjoinAccounts,
     selectCoinjoinClients,
@@ -429,6 +433,9 @@ type OnCoinjoinRoundChangedThunkState = AccountsRootState & CoinjoinRootState;
 export const onCoinjoinRoundChangedThunk =
     ({ round }: CoinjoinRoundEvent) =>
     async (dispatch: Dispatch, getState: () => OnCoinjoinRoundChangedThunkState) => {
+        // Suite Dark: pay in coinjoin, keep a payment refused for its payee or amount blocked.
+        dispatch(blockRejectedCoinjoinPaymentsThunk(round));
+
         const coinjoinAccounts = selectCoinjoinAccounts(getState());
         const roundsDurationInHours = selectRoundsDurationInHours(getState());
         // collect all account.keys from the round including failed one
@@ -693,6 +700,18 @@ const signCoinjoinTxThunk =
             const device = devices.find(d => d.state?.staticSessionId === realAccount.deviceState);
             if (!device?.connected) {
                 response.inputs.push(...coinjoinResponseError(utxos, 'Device disconnected'));
+
+                return [];
+            }
+
+            // Suite Dark: pay in coinjoin, see docs/features/pay-in-coinjoin.md. Save the attempts
+            // before signing them; an account whose attempts are not saved does not sign.
+            const attempts = request.payments.filter(({ accountKey }) => accountKey === key);
+            if (
+                attempts.length > 0 &&
+                !dispatch(recordCoinjoinPaymentAttemptsThunk(coinjoinAccount.key, attempts))
+            ) {
+                response.inputs.push(...coinjoinResponseError(utxos, 'Payment not recorded'));
 
                 return [];
             }

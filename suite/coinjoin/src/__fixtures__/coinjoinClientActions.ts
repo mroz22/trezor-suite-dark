@@ -767,6 +767,7 @@ export const signCoinjoinTx: SignCoinjoinTxFixture[] = [
                 coinjoinRequest: COINJOIN_REQUEST,
             },
             liquidityClues: [{ accountKey: 'account-A', rawLiquidityClue: 1 }],
+            payments: [],
         },
         result: {
             actions: [],
@@ -913,6 +914,7 @@ export const signCoinjoinTx: SignCoinjoinTxFixture[] = [
                 coinjoinRequest: COINJOIN_REQUEST,
             },
             liquidityClues: [],
+            payments: [],
         },
         result: {
             actions: [],
@@ -1063,6 +1065,7 @@ export const signCoinjoinTx: SignCoinjoinTxFixture[] = [
                 coinjoinRequest: COINJOIN_REQUEST,
             },
             liquidityClues: [],
+            payments: [],
         },
         result: {
             actions: [],

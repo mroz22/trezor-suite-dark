@@ -58,6 +58,7 @@ export type EnumBootCommand = Static<typeof EnumBootCommand>;
 export const EnumBootCommand = Type.Enum(BootCommand);
 
 export enum Enum_Capability {
+    Capability_CoinJoinPayment = 1001,
     Capability_Bitcoin = 1,
     Capability_Bitcoin_like = 2,
     Capability_Binance = 3,

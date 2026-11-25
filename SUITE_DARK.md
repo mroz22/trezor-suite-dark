@@ -236,6 +236,8 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   does not match its parameters, a min input count below 21, refused ownership proofs).
 - OpenCoordinator was only checked through its status on 2026-11-22 and has not mixed with Suite Dark, and changing
   the coordinator in the Coinjoin setup (`CoinjoinService.replaceClient`) has not run in the desktop app yet.
+- Pay in coinjoin has run end to end only on regtest with the Firmware Dark emulator (2026-11-25), not with kruw, on
+  mainnet or on a real Model T yet, and the history shows no line for a payment.
 
 ## Working here
 
@@ -385,4 +387,6 @@ that clone's `origin/*` to `sdref-origin/*`, its branches to `sdref/*` and one t
   `860f96c00f`.
 
 Companion projects of the old fork, also local only: `firmware-dark` (unofficial Bitcoin-only firmware),
-`suite-extension-dark` (password autofill extension) and `relay-dark` (Evolu relay).
+`suite-extension-dark` (password autofill extension) and `relay-dark` (Evolu relay). Only the pay in coinjoin branch of
+`firmware-dark`, `feat/coinjoin-payment`, is published: since 2026-11-25 in the fork `mroz22/trezor-firmware`, where it
+is built from.
