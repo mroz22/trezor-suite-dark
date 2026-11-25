@@ -40,7 +40,7 @@
             <p class="lede">
                 Trezor Suite for desktop with the analytics, crash reports, feedback forms and
                 promotions taken out, and Tor switched on. It's a fork I maintain. The code is
-                Trezor's development branch plus ten small commits.
+                Trezor's development branch plus a short series of commits.
             </p>
             <div class="cta">
                 <a class="btn btn-primary" href="#build">How to build it</a>
@@ -76,8 +76,9 @@
                     </li>
                     <li>
                         No promo carousel, shop banners, app store badges, Refer-a-Friend or paid
-                        surveys. Earn's staking and yield banners are still there, and you can close
-                        them.
+                        surveys. Refer-a-Friend comes back if you turn on debug mode, and its page
+                        then asks a Trezor development server about the program. Earn's staking and
+                        yield banners are still there, and you can close them.
                     </li>
                     <li>
                         No Buy, Sell or Swap, and none of the identity checks (KYC) that come with
@@ -90,7 +91,10 @@
                         Coinjoin works again. Trezor Suite ships without a coordinator now, so Suite
                         Dark uses <code>coinjoin.kruw.io</code>, a public coordinator that neither
                         Trezor nor I run. It charged no coordinator fee in November 2026. Mining
-                        fees still apply.
+                        fees still apply. Suite Dark also checks the coordinator: it skips rounds
+                        with fewer than 21 inputs or a coordinator fee above 0.1 %, and before
+                        signing it checks the round, its own inputs and outputs and the other
+                        participants' ownership proofs.
                     </li>
                     <li>
                         It's a separate app with its own app id, settings folder and
@@ -162,7 +166,10 @@
                         It's built from Trezor's development branch, not from releases, so you get
                         changes Trezor hasn't shipped yet.
                     </li>
-                    <li>I check the changes myself. There are no automated builds or tests yet.</li>
+                    <li>
+                        I check the changes myself, and every push runs lint, type checks and unit
+                        tests on GitHub. There are no automated app builds yet.
+                    </li>
                     <li>
                         There are no official installers. If someone sends you one, don't run it.
                     </li>
@@ -217,22 +224,10 @@ yarn build:app:electron --publish never --linux --x64</code></pre>
                 <p class="prose">
                     The repo is a GitHub fork of <code>trezor/trezor-suite</code>. Its
                     <code>develop</code> branch is an untouched copy of Trezor's. The
-                    <code>main</code> branch is <code>develop</code> plus these commits, rebased
-                    whenever I sync with Trezor:
+                    <code>main</code> branch is <code>develop</code> plus a short series of commits,
+                    rebased whenever I sync with Trezor: first the documentation, then fixes I offer
+                    to Trezor, then the Suite Dark changes.
                 </p>
-                <ol class="commits" role="list">
-                    <li>Brand the desktop app as Suite Dark</li>
-                    <li>Stop reporting anything to Trezor servers</li>
-                    <li>Start with Tor and discreet mode on</li>
-                    <li>Remove promotional banners</li>
-                    <li>Mix through the kruw.io coinjoin coordinator</li>
-                    <li>Call the experimental password manager "Password manager"</li>
-                    <li>Default to the dark theme</li>
-                    <li>Keep the local development profile separate</li>
-                    <li>Remove user feedback forms</li>
-                    <li>Hide trading</li>
-                    <li>Document the fork for contributors and agents</li>
-                </ol>
                 <p class="prose">
                     Read them
                     <a href="https://github.com/mroz22/trezor-suite-dark/commits/main">on GitHub</a>
@@ -243,7 +238,8 @@ yarn build:app:electron --publish never --linux --x64</code></pre>
                     <a href="https://github.com/mroz22/trezor-suite-dark/blob/main/SUITE_DARK.md"
                         ><code>SUITE_DARK.md</code></a
                     >
-                    explains why each change is there.
+                    keeps the decisions behind them and the known gaps; each commit's message
+                    explains its change.
                 </p>
             </section>
         </main>
