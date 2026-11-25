@@ -34,6 +34,12 @@ Suite refuses a coinjoin whose inputs all belong to its own accounts, so a regte
 
 Coordinators older than WalletWasabi 2.3.0, such as the one of the local backend, compute the id of a blame round before they set its input registration timeout. Suite skips their blame rounds as rounds whose id does not match their parameters and releases the inputs that wait for them.
 
+> Nothing else has to be running. Suite used to spawn a bundled
+> `WalletWasabi.WabiSabiClientLibrary` process and talk to it over a localhost port for the
+> credential crypto, amount decomposition, input selection and anonymity scoring; all of
+> that is now computed in process by `@trezor/wabisabi-crypto`,
+> `@trezor/coinjoin-strategy` and `@trezor/coinjoin-analysis`.
+
 1. run `./docker/docker-coinjoin-backend.sh`
 
     > If you are using `trezor-user-env` make sure that it's started with `-r` option (disabled regtest)

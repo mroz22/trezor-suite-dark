@@ -11,6 +11,5 @@ export {
     sentryAuthToken,
     transportBrowserPing,
 } from './env';
-export { NixosInterpreterPlugin } from './nixosInterpreterPlugin';
 export { reactCompilerOptions, shouldCompileWithReactCompiler } from './reactCompiler';
 export { ShellSpawnPlugin } from './shellSpawnPlugin';
