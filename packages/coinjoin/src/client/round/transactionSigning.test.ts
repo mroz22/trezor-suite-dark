@@ -33,7 +33,7 @@ describe('transactionSigning', () => {
     let server: Awaited<ReturnType<typeof createServer>>;
 
     // Every own input which reaches signing got its confirmed credentials from the coordinator.
-    const CONFIRMED = { confirmedAmountCredentials: [{ Value: 1 }] };
+    const CONFIRMED = { confirmedAmountCredentials: [{ value: 1 }] };
 
     // Outpoints (hash:index) of the own input 1b5b1fee…00000000 and the external input
     // 0000…01000000, sorted, as outputRegistration pins them.
@@ -60,14 +60,7 @@ describe('transactionSigning', () => {
         server?.close();
     });
 
-    it('getTransactionData: coinjoin request and update-liquidity-clue', async () => {
-        server?.addListener('test-request', ({ url, data, resolve }) => {
-            if (url.endsWith('/update-liquidity-clue')) {
-                resolve({ RawLiquidityClue: data.ExternalAmounts[0] });
-            }
-            resolve();
-        });
-
+    it('getTransactionData: coinjoin request and locally updated liquidity clue', async () => {
         const response = await transactionSigning(
             createCoinjoinRound(
                 [
@@ -506,19 +499,22 @@ describe('transactionSigning', () => {
                 });
 
                 const setSessionPhase = jest.fn();
+                const updateRawLiquidityClue = jest.fn();
                 const round = createSigningRound(
                     [createInput('account-A', OWN_OUTPOINT, CONFIRMED)],
                     registeredOutpoints,
                     setSessionPhase,
                 );
-                const response = await transactionSigning(round, ACCOUNTS, {
-                    ...server?.requestOptions,
-                    network: networks.bitcoin,
-                    minInputCount,
-                });
+                const response = await transactionSigning(
+                    round,
+                    [{ ...ACCOUNTS[0], updateRawLiquidityClue }],
+                    { ...server?.requestOptions, network: networks.bitcoin, minInputCount },
+                );
 
                 expect(response.transactionData).toBeUndefined();
-                expect(requestedUrls).toEqual([]); // no /update-liquidity-clue
+                expect(requestedUrls).toEqual([]); // nothing sent to the coordinator
+                // The outputs of a refused transaction do not reach the liquidity clue.
+                expect(updateRawLiquidityClue).not.toHaveBeenCalled();
                 expect(round.getRequest()).toBeUndefined(); // nothing to sign on the device
                 response.inputs.forEach(input => {
                     expect(input.error).toBeInstanceOf(coordinator.CoordinatorMisbehaviorError);
@@ -593,7 +589,7 @@ describe('transactionSigning', () => {
                 expect.objectContaining({
                     path: 'm/10025',
                     outpoint: OWN_OUTPOINT,
-                    amount: 1,
+                    amount: 1_000_000,
                     address: 'bcrt1pl3y9gf7xk2ryvmav5ar66ra0d2hk7lhh9mmusx3qvn0n09kmaghq6gq9fy',
                     scriptPubKey:
                         '5120fc485427c6b286466faca747ad0faf6aaf6f7ef72ef7c81a2064df3796dbea2e',

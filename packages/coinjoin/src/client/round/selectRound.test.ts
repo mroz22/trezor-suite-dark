@@ -1,3 +1,7 @@
+import {
+    type SelectInputsForRoundRequest,
+    selectInputsForRoundWithYields as selectUtxosForRound,
+} from '@trezor/coinjoin-strategy';
 import { noopLogger } from '@trezor/logger';
 
 import { createServer } from '../../../mocks/server';
@@ -24,6 +28,33 @@ import {
     selectRound,
 } from './selectRound';
 
+/**
+ * Input selection runs in process now, so the suite stubs the ported selector rather than
+ * intercepting a request to the middleware. The stub receives the same request object
+ * that used to be the HTTP body.
+ */
+jest.mock('@trezor/coinjoin-strategy', () => {
+    const actual = jest.requireActual('@trezor/coinjoin-strategy');
+
+    return {
+        ...actual,
+        selectInputsForRoundWithYields: jest.fn(actual.selectInputsForRoundWithYields),
+    };
+});
+
+const realSelectInputsForRound = jest.requireActual('@trezor/coinjoin-strategy')
+    .selectInputsForRoundWithYields as typeof selectUtxosForRound;
+
+const selectUtxosMock = selectUtxosForRound as jest.MockedFunction<typeof selectUtxosForRound>;
+
+/** Stubs the selector and counts the calls, as the HTTP spy used to. */
+const stubSelector = (implementation: (request: SelectInputsForRoundRequest) => number[]) => {
+    const spy = jest.fn(implementation);
+    selectUtxosMock.mockImplementation(request => Promise.resolve().then(() => spy(request)));
+
+    return spy;
+};
+
 const ACCOUNT = {
     accountKey: 'account-A',
     scriptType: 'Taproot',
@@ -49,6 +80,7 @@ describe('selectRound', () => {
     beforeEach(() => {
         prison.inmates = [];
         server?.removeAllListeners('test-request');
+        selectUtxosMock.mockImplementation(realSelectInputsForRound);
     });
 
     afterAll(() => {
@@ -649,23 +681,15 @@ describe('selectRound', () => {
         });
     });
 
-    it('middleware/select-inputs-for-round throws error', async () => {
-        // mock server response
-        // return error for each round with miningFeeRate: 1 (second round in fixture)
+    it('selectInputsForRound throws error', async () => {
+        // throw for each round with miningFeeRate: 1 (second round in fixture),
         // for other rounds return invalid indices
-        const spy = jest.fn();
-        server?.addListener('test-request', ({ url, data, resolve, reject }) => {
-            if (url.endsWith('/select-inputs-for-round')) {
-                spy();
-                if (data.MiningFeeRate === 1) {
-                    reject(500, { error: 'ExpectedRuntimeError' });
-                } else {
-                    resolve({
-                        Indices: [5], // non existing indices (utxo indexes)
-                    });
-                }
+        const spy = stubSelector(request => {
+            if (request.MiningFeeRate === 1) {
+                throw new Error('ExpectedRuntimeError');
             }
-            resolve();
+
+            return [5]; // non existing indices (utxo indexes)
         });
 
         const result = await selectInputsForRound({
@@ -704,18 +728,104 @@ describe('selectRound', () => {
         expect(result).toBeUndefined();
     });
 
-    it('Skipping round when fees are high', async () => {
-        // mock server response
-        // return error for each round with miningFeeRate: 1 (second round in fixture)
-        // for other rounds return invalid indices
-        const spy = jest.fn();
-        server?.addListener('test-request', ({ url, resolve }) => {
-            if (url.endsWith('/select-inputs-for-round')) {
-                spy();
-                resolve([]);
-            }
-            resolve();
+    it('selects for one round and account at a time', async () => {
+        let running = 0;
+        let mostRunning = 0;
+        let calls = 0;
+        selectUtxosMock.mockImplementation(async () => {
+            calls += 1;
+            running += 1;
+            mostRunning = Math.max(mostRunning, running);
+            await new Promise(resolve => setTimeout(resolve, 5));
+            running -= 1;
+
+            return [];
         });
+
+        await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [
+                createCoinjoinRound([], { ...server?.requestOptions, statusRound: { Id: '01' } }),
+                createCoinjoinRound([], { ...server?.requestOptions, statusRound: { Id: '02' } }),
+            ],
+            accountCandidates: [
+                { ...ACCOUNT, accountKey: 'account1' },
+                { ...ACCOUNT, accountKey: 'account2' },
+            ],
+            options: server?.requestOptions,
+        });
+
+        expect(calls).toBe(4);
+        expect(mostRunning).toBe(1);
+    });
+
+    it('stops selecting and joins no round once the client is disabled', async () => {
+        const controller = new AbortController();
+        // The first selection finds an input, then the client is disabled.
+        const spy = stubSelector(() => {
+            controller.abort();
+
+            return [0];
+        });
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [
+                createCoinjoinRound([], { ...server?.requestOptions, statusRound: { Id: '01' } }),
+                createCoinjoinRound([], { ...server?.requestOptions, statusRound: { Id: '02' } }),
+            ],
+            accountCandidates: [
+                {
+                    ...ACCOUNT,
+                    accountKey: 'account1',
+                    utxos: [{ outpoint: 'AA', amount: 100000, anonymityLevel: 1 }],
+                },
+                {
+                    ...ACCOUNT,
+                    accountKey: 'account2',
+                    utxos: [{ outpoint: 'BA', amount: 100000, anonymityLevel: 1 }],
+                },
+            ],
+            options: { ...server?.requestOptions, signal: controller.signal },
+        });
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(result).toBeUndefined();
+    });
+
+    it('hands the event loop back to a search only until the client is disabled', async () => {
+        const controller = new AbortController();
+        const logger = { ...server?.requestOptions.logger, error: jest.fn() };
+        // A search which yields twice: the client is disabled after the first yield.
+        selectUtxosMock.mockImplementation(async (_request, _random, yieldToCaller) => {
+            await yieldToCaller();
+            controller.abort();
+            await yieldToCaller();
+
+            return [0];
+        });
+
+        const result = await selectInputsForRound({
+            aliceGenerator,
+            roundCandidates: [
+                createCoinjoinRound([], { ...server?.requestOptions, statusRound: { Id: '01' } }),
+            ],
+            accountCandidates: [
+                {
+                    ...ACCOUNT,
+                    accountKey: 'account1',
+                    utxos: [{ outpoint: 'AA', amount: 100000, anonymityLevel: 1 }],
+                },
+            ],
+            options: { ...server?.requestOptions, signal: controller.signal, logger },
+        });
+
+        expect(logger.error).toHaveBeenCalledWith('selectInputsForRound failed Aborted by signal');
+        expect(result).toBeUndefined();
+    });
+
+    it('Skipping round when fees are high', async () => {
+        const spy = stubSelector(() => []);
 
         const result = await selectInputsForRound({
             aliceGenerator,
@@ -755,19 +865,12 @@ describe('selectRound', () => {
             options: server?.requestOptions,
         });
 
-        expect(spy).toHaveBeenCalledTimes(1); // middleware was called once for account3
+        expect(spy).toHaveBeenCalledTimes(1); // the selector was called once, for account3
         expect(result).toBeUndefined();
     });
 
     it('Skipping round when selected utxo value > maxSuggestedAmount', async () => {
-        const spy = jest.fn();
-        server?.addListener('test-request', ({ url, resolve }) => {
-            if (url.endsWith('/select-inputs-for-round')) {
-                spy();
-                resolve({ Indices: [0] });
-            }
-            resolve();
-        });
+        const spy = stubSelector(() => [0]);
 
         const result = await selectInputsForRound({
             aliceGenerator,
@@ -790,19 +893,50 @@ describe('selectRound', () => {
             options: server?.requestOptions,
         });
 
-        expect(spy).toHaveBeenCalledTimes(1); // middleware was called once
+        expect(spy).toHaveBeenCalledTimes(1); // the selector was called once
         expect(result).toBeUndefined();
     });
 
-    it('Skipping round when selected utxo effective value < allowedOutputAmounts.min', async () => {
-        const spy = jest.fn();
-        server?.addListener('test-request', ({ url, resolve }) => {
-            if (url.endsWith('/select-inputs-for-round')) {
-                spy();
-                resolve({ Indices: [0] });
-            }
-            resolve();
+    it('joins no round whose input registration ends too soon after the selection', async () => {
+        const start = Date.now();
+        const select = () =>
+            selectInputsForRound({
+                aliceGenerator,
+                roundCandidates: [
+                    createCoinjoinRound([], {
+                        ...server?.requestOptions,
+                        round: { inputRegistrationEnd: new Date(start + 45_000).toISOString() },
+                    }),
+                ],
+                accountCandidates: [
+                    {
+                        ...ACCOUNT,
+                        accountKey: 'account1',
+                        utxos: [{ outpoint: 'AA', amount: 20000, anonymityLevel: 1 }],
+                    },
+                ],
+                options: server?.requestOptions,
+            });
+
+        // A selection that took 20 seconds leaves 25 seconds of input registration.
+        const now = jest.spyOn(Date, 'now');
+        stubSelector(() => {
+            now.mockReturnValue(start + 20_000);
+
+            return [0];
         });
+        const late = await select();
+        now.mockRestore();
+
+        stubSelector(() => [0]);
+        const inTime = await select();
+
+        expect(late).toBeUndefined();
+        expect(inTime?.inputs.map(input => input.outpoint)).toEqual(['AA']);
+    });
+
+    it('Skipping round when selected utxo effective value < allowedOutputAmounts.min', async () => {
+        const spy = stubSelector(() => [0]);
 
         const result = await selectInputsForRound({
             aliceGenerator,
@@ -824,23 +958,15 @@ describe('selectRound', () => {
             options: server?.requestOptions,
         });
 
-        expect(spy).toHaveBeenCalledTimes(1); // middleware was called once
+        expect(spy).toHaveBeenCalledTimes(1); // the selector was called once
         expect(result).toBeUndefined();
     });
 
     it('Multiple blame rounds in roundCandidates', async () => {
         // pick utxo which amount is greater than miningFeeRate
-        server?.addListener('test-request', ({ url, data, resolve }) => {
-            if (url.endsWith('/select-inputs-for-round')) {
-                const Indices = data.Utxos.flatMap((utxo: any, i: number) => {
-                    if (utxo.Amount < data.MiningFeeRate) return [];
-
-                    return i;
-                });
-                resolve({ Indices });
-            }
-            resolve();
-        });
+        stubSelector(request =>
+            request.Utxos.flatMap((utxo, i) => (utxo.Amount < request.MiningFeeRate ? [] : i)),
+        );
 
         const result = await selectInputsForRound({
             aliceGenerator,
@@ -891,24 +1017,12 @@ describe('selectRound', () => {
     });
 
     it('Success. new CoinjoinRound created', async () => {
-        // dummy mock of /select-inputs-for-round
         // pick utxo which amount is greater than miningFeeRate + 1000
-        const spy = jest.fn();
-        server?.addListener('test-request', ({ url, data, resolve }) => {
-            if (url.endsWith('/select-inputs-for-round')) {
-                spy();
-                const Indices = data.Utxos.flatMap((utxo: any, i: number) => {
-                    if (utxo.Amount < 1000 + data.MiningFeeRate) return [];
-
-                    return i;
-                });
-
-                resolve({
-                    Indices,
-                });
-            }
-            resolve();
-        });
+        const spy = stubSelector(request =>
+            request.Utxos.flatMap((utxo, i) =>
+                utxo.Amount < 1000 + request.MiningFeeRate ? [] : i,
+            ),
+        );
 
         const roundWithMiningFee = (MiningFeeRate: number) =>
             createStatusRound({
@@ -970,14 +1084,7 @@ describe('selectRound', () => {
     });
 
     it('Success. new blame Round created', async () => {
-        const spy = jest.fn();
-        server?.addListener('test-request', ({ url, resolve }) => {
-            if (url.endsWith('/select-inputs-for-round')) {
-                spy();
-                resolve([]);
-            }
-            resolve();
-        });
+        const spy = stubSelector(() => []);
 
         const blameOf = '1'.repeat(64);
 
@@ -1016,7 +1123,7 @@ describe('selectRound', () => {
             options: server?.requestOptions,
         });
 
-        expect(spy).toHaveBeenCalledTimes(0); // middleware was not called, detained inputs were used
+        expect(spy).toHaveBeenCalledTimes(0); // the selector was not called, detained inputs were used
         expect(result?.inputs.length).toBe(2);
         expect(result).toMatchObject({
             id: blameRound.Id,
@@ -1158,7 +1265,7 @@ describe('selectRound', () => {
         });
         expect(result2).toBeUndefined();
 
-        // no result from middleware
+        // no result from the selector
         const result3 = await selectRound({
             roundGenerator,
             aliceGenerator,

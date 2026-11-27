@@ -1,12 +1,22 @@
+import { getOutputAmounts } from '@trezor/coinjoin-strategy';
+
 import {
     ACCOUNT,
     outputDecomposition as fixtures,
 } from './__fixtures__/outputDecomposition.fixture';
 import { outputDecomposition, setAccountError } from './outputDecomposition';
-import { createServer } from '../../../mocks/server';
+import {
+    configureMockCoordinator,
+    createServer,
+    getRoundCredentialKinds,
+    resetMockCoordinator,
+} from '../../../mocks/server';
+import { mintCredentials } from '../../__fixtures__/credentialIssuer.fixture';
 import { createInput } from '../../__fixtures__/input.fixture';
 import {
+    DEFAULT_ROUND,
     INPUT_ADDED_EVENT,
+    ROUND_CREATION_EVENT,
     createCoinjoinRound,
     createInputAddedEvent,
 } from '../../__fixtures__/round.fixture';
@@ -15,7 +25,50 @@ import { redacted } from '../../utils/redacted';
 import { CoinjoinPrison } from '../CoinjoinPrison';
 import { CoordinatorMisbehaviorError } from '../coordinator';
 
+/**
+ * This suite is about the plumbing between decomposition and credential joining: which
+ * amounts are asked for, how `availableVsize` is derived, and how many credential
+ * issuance round trips it takes to split the inputs' credentials into those amounts.
+ *
+ * Only the decomposer is stubbed, so that each case can pin the amounts it is about. The
+ * credentials are real: the fixtures start in the middle of a round, and the values they
+ * name are minted from the mock coordinator's own issuer, which then validates every
+ * reissuance the suite drives through it — the balance proof, both range proofs and the
+ * serial numbers. A join that does not balance fails here instead of being waved through.
+ */
+jest.mock('@trezor/coinjoin-strategy', () => ({
+    ...jest.requireActual('@trezor/coinjoin-strategy'),
+    getOutputAmounts: jest.fn(),
+}));
+
+const getOutputAmountsMock = getOutputAmounts as jest.MockedFunction<typeof getOutputAmounts>;
+
 let server: Awaited<ReturnType<typeof createServer>>;
+
+/**
+ * The input's confirmed credentials, minted for the values the fixture names.
+ *
+ * A fixture can only name values; a `Credential` is a value plus a blinding factor plus
+ * a MAC that only the coordinator can produce, so the values have to be taken through a
+ * registration against the issuer that will later verify them.
+ */
+const withMintedCredentials = async (options: Record<string, any>) => {
+    const kinds = getRoundCredentialKinds(DEFAULT_ROUND.Id);
+    const values = (credentials: { value: number }[]) =>
+        credentials.map(credential => credential.value) as [number, number];
+
+    return {
+        ...options,
+        confirmedAmountCredentials: await mintCredentials(
+            kinds.amount,
+            values(options.confirmedAmountCredentials),
+        ),
+        confirmedVsizeCredentials: await mintCredentials(
+            kinds.vsize,
+            values(options.confirmedVsizeCredentials),
+        ),
+    };
+};
 
 describe('outputRegistration', () => {
     beforeAll(async () => {
@@ -23,7 +76,12 @@ describe('outputRegistration', () => {
     });
 
     beforeEach(() => {
+        jest.clearAllMocks();
         server?.removeAllListeners('test-request');
+    });
+
+    afterEach(() => {
+        resetMockCoordinator();
     });
 
     afterAll(() => {
@@ -47,12 +105,10 @@ describe('outputRegistration', () => {
 
     it('outputDecomposition in a blame round counts the outputs of the failed round', async () => {
         const availableVsize: number[] = [];
-        server?.addListener('test-request', ({ url, resolve, data }) => {
-            if (url.endsWith('/get-outputs-amounts')) {
-                availableVsize.push(data.AvailableVsize);
-                resolve({ OutputAmounts: [20000] });
-            }
-            resolve();
+        getOutputAmountsMock.mockImplementation(request => {
+            availableVsize.push(request.AvailableVsize);
+
+            return [20000];
         });
 
         const blameOf = 'B'.repeat(64);
@@ -69,10 +125,10 @@ describe('outputRegistration', () => {
         const input = createInput(
             'account-A',
             'A00000000000000000000000000000000000000000000000000000000000000001000000',
-            {
-                confirmedAmountCredentials: [{ Value: 30000 }, { Value: 0 }],
-                confirmedVsizeCredentials: [{ Value: 197 }, { Value: 0 }],
-            },
+            await withMintedCredentials({
+                confirmedAmountCredentials: [{ value: 30000 }, { value: 0 }],
+                confirmedVsizeCredentials: [{ value: 197 }, { value: 0 }],
+            }),
         );
         const response = await outputDecomposition(
             createCoinjoinRound([input], {
@@ -80,6 +136,7 @@ describe('outputRegistration', () => {
                 prison,
                 round: {
                     phase: 3,
+                    phaseDeadline: Date.now() + 120_000,
                     blameOf,
                     coinjoinState: { Type: '', Events: [createInputAddedEvent(input.outpoint)] },
                 },
@@ -97,29 +154,45 @@ describe('outputRegistration', () => {
         // No address is free, the two of the failed round take an output each.
         expect(availableVsize).toEqual([2 * 43]);
         expect(response).toMatchObject([{ outputs: [{ amount: 20086 }] }]);
-    });
+    }, 120_000);
 
     fixtures.forEach(f => {
         it(`outputDecomposition ${f.description}`, async () => {
             const spy = jest.fn();
             const availableVsize: number[] = [];
-            server?.addListener('test-request', ({ url, resolve, data }) => {
-                if (url.endsWith('/get-outputs-amounts')) {
-                    availableVsize.push(data.AvailableVsize);
-                    resolve({
-                        OutputAmounts: f.outputAmounts,
-                    });
-                }
+            getOutputAmountsMock.mockImplementation(request => {
+                availableVsize.push(request.AvailableVsize);
+
+                return f.outputAmounts;
+            });
+            server?.addListener('test-request', ({ url, resolve }) => {
                 if (url.endsWith('/credential-issuance')) {
                     spy();
                 }
+                // Answered by the mock coordinator's issuer, which verifies the join.
                 resolve();
+            });
+
+            // The issuer has to be built for the credential bounds the client is sizing
+            // its range proofs from, which one case deliberately lowers.
+            configureMockCoordinator({
+                MaxAmountCredentialValue:
+                    f.roundParameters.MaxAmountCredentialValue ??
+                    ROUND_CREATION_EVENT.RoundParameters.MaxAmountCredentialValue,
             });
 
             // NOTE: scriptPubKey is only used to calculate external output size, it can be reused for all inputs
             const ScriptPubKey =
                 '1 6a6daebd9abae25cdd376b811190163eb00c58e87da1867ba8546229098231c3';
-            const inputs = f.inputs.map(i => createInput(...(i as Parameters<typeof createInput>)));
+            const inputs = await Promise.all(
+                f.inputs.map(async ([accountKey, outpoint, options]) =>
+                    createInput(
+                        accountKey as string,
+                        outpoint as string,
+                        await withMintedCredentials(options as Record<string, any>),
+                    ),
+                ),
+            );
             const events: any[] = inputs.map(i => ({
                 Type: 'InputAdded',
                 Coin: {
@@ -136,6 +209,9 @@ describe('outputRegistration', () => {
                     ...server?.requestOptions,
                     round: {
                         phase: 3,
+                        // The deadline of the fixture round counts from when this file was
+                        // loaded, and on a loaded CI runner the earlier cases use it up.
+                        phaseDeadline: Date.now() + 120_000,
                         coinjoinState: {
                             Type: '',
                             Events: [...events, INPUT_ADDED_EVENT],
@@ -160,24 +236,29 @@ describe('outputRegistration', () => {
             const byValue = (a: number, b: number) => a - b;
             expect([...availableVsize].sort(byValue)).toEqual([...f.availableVsize].sort(byValue));
             expect(spy).toHaveBeenCalledTimes(f.credentialIssuanceCalls);
-        });
+            // Minting the inputs' credentials and every reissuance the case drives are
+            // real range proofs, a few hundred milliseconds each.
+        }, 120_000);
     });
 
     it('outputDecomposition does not log own amounts', async () => {
         // @ts-expect-error: indexing with noUncheckedIndexedAccess
         const f: (typeof fixtures)[number] = fixtures[0];
-        server?.addListener('test-request', ({ url, resolve }) => {
-            if (url.endsWith('/get-outputs-amounts')) {
-                resolve({ OutputAmounts: f.outputAmounts });
-            }
-            resolve();
-        });
+        getOutputAmountsMock.mockReturnValue(f.outputAmounts);
 
         const messages: string[] = [];
         const log = (message: string) => messages.push(redacted(message));
         const logger = { debug: log, info: log, log, warn: log, error: log };
 
-        const inputs = f.inputs.map(i => createInput(...(i as Parameters<typeof createInput>)));
+        const inputs = await Promise.all(
+            f.inputs.map(async ([accountKey, outpoint, options]) =>
+                createInput(
+                    accountKey as string,
+                    outpoint as string,
+                    await withMintedCredentials(options as Record<string, any>),
+                ),
+            ),
+        );
         const events: any[] = inputs.map(i => ({
             Type: 'InputAdded',
             Coin: {
@@ -195,6 +276,7 @@ describe('outputRegistration', () => {
                 ...server?.requestOptions,
                 round: {
                     phase: 3,
+                    phaseDeadline: Date.now() + 120_000,
                     coinjoinState: { Type: '', Events: [...events, INPUT_ADDED_EVENT] },
                 },
                 roundParameters: f.roundParameters,
@@ -204,7 +286,7 @@ describe('outputRegistration', () => {
         );
 
         const ownAmounts = [
-            ...inputs.flatMap(i => i.confirmedAmountCredentials!.map(c => c.Value)),
+            ...inputs.flatMap(i => i.confirmedAmountCredentials!.map(c => c.value)),
             ...f.outputAmounts,
             ...response.flatMap(r => r.outputs.map(o => o.amount)),
         ].filter(amount => amount > 0);
@@ -215,33 +297,35 @@ describe('outputRegistration', () => {
                 expect(message).not.toMatch(new RegExp(`\\b${amount}\\b`));
             });
         });
-    });
+    }, 120_000);
 
     it('outputDecomposition fails only the account whose amounts cannot be decomposed', async () => {
-        server?.addListener('test-request', ({ url, data, resolve, reject }) => {
-            if (url.endsWith('/get-outputs-amounts')) {
-                if (data.InternalAmounts.includes(30000)) {
-                    reject(500, { error: 'ExpectedRuntimeError' });
-                } else {
-                    resolve({ OutputAmounts: [19000] });
-                }
-            }
-            resolve();
+        getOutputAmountsMock.mockImplementation(request => {
+            // The decomposer throws, for example `Not enough money`, for one account only.
+            if (request.InternalAmounts.includes(30000)) throw new Error('ExpectedRuntimeError');
+
+            return [19000];
         });
 
-        const createAccountInput = (accountKey: string, outpoint: string, value: number) =>
-            createInput(accountKey, outpoint, {
-                confirmedAmountCredentials: [{ Value: value }, { Value: 0 }],
-                confirmedVsizeCredentials: [{ Value: 197 }, { Value: 0 }],
-            });
+        const createAccountInput = async (accountKey: string, outpoint: string, value: number) =>
+            createInput(
+                accountKey,
+                outpoint,
+                await withMintedCredentials({
+                    confirmedAmountCredentials: [{ value }, { value: 0 }],
+                    confirmedVsizeCredentials: [{ value: 197 }, { value: 0 }],
+                }),
+            );
         const inputs = [
-            createAccountInput('account-A', `${'a0'.repeat(32)}00000000`, 30000),
-            createAccountInput('account-B', `${'b0'.repeat(32)}00000000`, 20000),
+            await createAccountInput('account-A', `${'a0'.repeat(32)}00000000`, 30000),
+            await createAccountInput('account-B', `${'b0'.repeat(32)}00000000`, 20000),
         ];
         const round = createCoinjoinRound(inputs, {
             ...server?.requestOptions,
             round: {
                 phase: 3,
+                // The default deadline of the round fixture is a minute after the suite started.
+                phaseDeadline: Date.now() + 120_000,
                 coinjoinState: {
                     Type: '',
                     Events: inputs.map(i => createInputAddedEvent(i.outpoint)),
@@ -267,7 +351,7 @@ describe('outputRegistration', () => {
             phase: SessionPhase.OutputRegistrationFailed,
             accountKeys: ['account-A'],
         });
-    });
+    }, 120_000);
 });
 
 describe('setAccountError', () => {

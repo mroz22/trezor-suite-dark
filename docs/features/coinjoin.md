@@ -34,6 +34,12 @@ Suite refuses a coinjoin whose inputs all belong to its own accounts, so a regte
 
 Coordinators older than WalletWasabi 2.3.0, such as the one of the local backend, compute the id of a blame round before they set its input registration timeout. Suite skips their blame rounds as rounds whose id does not match their parameters and releases the inputs that wait for them.
 
+> Nothing else has to be running. Suite used to spawn a bundled
+> `WalletWasabi.WabiSabiClientLibrary` process and talk to it over a localhost port for the
+> credential crypto, amount decomposition, input selection and anonymity scoring; all of
+> that is now computed in process by `@trezor/wabisabi-crypto`,
+> `@trezor/coinjoin-strategy` and `@trezor/coinjoin-analysis`.
+
 1. run `./docker/docker-coinjoin-backend.sh`
 
     > If you are using `trezor-user-env` make sure that it's started with `-r` option (disabled regtest)
@@ -58,3 +64,17 @@ Coordinators older than WalletWasabi 2.3.0, such as the one of the local backend
     > Coinjoin accounts are not using this backend but you want to have all Regtest accounts synchronized with the same bitcoind
 
 1. Access coinjoin account
+
+## A round without a device
+
+`yarn workspace @trezor/coinjoin test:regtest` runs a whole round against the backend above
+with throwaway taproot keys: it registers two inputs, confirms them, decomposes the amounts,
+reissues and registers every output, signs and waits for the coordinator to broadcast. Every
+credential is built by `packages/coinjoin/src/client/credentials.ts` and every decomposition
+by `@trezor/coinjoin-strategy`, so it is the check that the client's credential requests are
+accepted on the wire — the unit vectors only compare parsed values. The ownership proofs and
+witnesses are signed locally instead of by a Trezor, so it does not replace one manual pass
+through the UI with a device.
+
+> The published backend image ships Bitcoin Knots v25.1.knots20231115, whose build expiry has
+> passed, so its `bitcoind` needs `-softwareexpiry=0` to start at all.

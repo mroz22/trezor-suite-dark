@@ -31,7 +31,7 @@ export const TX_SIGNING_DELAY = 50000;
 export const ROUND_SELECTION_REGISTRATION_OFFSET = 30000;
 
 // Free change addresses an account needs to join a regular round, the most outputs into which the
-// middleware decomposes the inputs of one account.
+// amount decomposer decomposes the inputs of one account.
 // https://github.com/trezor/WalletWasabi/blob/34a0f983a5/WalletWasabi/WabiSabi/Client/AmountDecomposer.cs#L84
 export const ROUND_SELECTION_MAX_OUTPUTS = 10;
 

@@ -7,6 +7,7 @@ import { CoinjoinRound } from './CoinjoinRound';
 import { Status } from './Status';
 import { type AnalyzeTransactionsResult, analyzeTransactions } from './analyzeTransactions';
 import { CoordinatorMisbehaviorError } from './coordinator';
+import * as credentials from './credentials';
 import { ROUND_MIN_INPUT_COUNT } from '../constants';
 import { SessionPhase } from '../enums';
 import type {
@@ -29,6 +30,8 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
     private accounts: Account[] = []; // list of registered accounts
     private rounds: CoinjoinRound[] = []; // list of active rounds
     private prison: CoinjoinPrison; // list of temporary blocked inputs/addresses
+    private isSelectingRound = false;
+    private isRoundSelectionRequested = false;
 
     constructor(settings: CoinjoinClientSettings) {
         super();
@@ -55,6 +58,10 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
             this.abortController = new AbortController();
         }
 
+        // Build the credential crypto's precomputed tables now, in event-loop-sized
+        // pieces, rather than inside the first input registration. Nothing waits for it.
+        credentials.warmUp().catch(error => this.logger.warn(`Credential warm-up ${error}`));
+
         return this.status.start();
     }
 
@@ -68,7 +75,8 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
     }
 
     /**
-     * Get transactions from CoinjoinBackend.getAccountInfo and calculate anonymity in middleware.
+     * Get transactions from CoinjoinBackend.getAccountInfo and calculate anonymity with
+     * `@trezor/coinjoin-analysis`.
      * Returns { key => value } where `key` is an address and `value` is an anonymity level of that address
      */
     analyzeTransactions<T extends keyof AnalyzeTransactionsResult>(
@@ -79,9 +87,7 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
             txs,
             {
                 network: this.network,
-                middlewareUrl: this.settings.middlewareUrl,
                 logger: this.logger,
-                signal: this.abortController.signal,
             },
             sections,
         );
@@ -222,6 +228,15 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
 
         // there are no CoinjoinRounds to process? try to create new one
         if (roundsToProcess.length === 0 && coordinatorUrl) {
+            // The selection runs for seconds for each round and account. One started meanwhile
+            // would select the same utxos for another round, so a request that comes during it
+            // runs once it is over, against the rounds of then.
+            if (this.isSelectingRound) {
+                this.isRoundSelectionRequested = true;
+
+                return;
+            }
+            this.isSelectingRound = true;
             const newRound = await CoinjoinRound.create({
                 accounts: this.accounts,
                 statusRounds: rounds,
@@ -232,11 +247,12 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
                     signal: this.abortController.signal,
                     coordinatorName: this.settings.coordinatorName,
                     coordinatorUrl,
-                    middlewareUrl: this.settings.middlewareUrl,
                     minInputCount,
                     logger: this.logger,
                     setSessionPhase: sessionPhase => this.setSessionPhase(sessionPhase),
                 },
+            }).finally(() => {
+                this.isSelectingRound = false;
             });
 
             if (newRound) {
@@ -276,6 +292,11 @@ export class CoinjoinClient extends TypedEmitter<CoinjoinClientEvents> {
                     // add new round to the list
                     this.rounds.push(newRound);
                 }
+            }
+
+            if (this.isRoundSelectionRequested) {
+                this.isRoundSelectionRequested = false;
+                this.onStatusUpdate({ changed: [], rounds: this.status.rounds });
             }
         }
 

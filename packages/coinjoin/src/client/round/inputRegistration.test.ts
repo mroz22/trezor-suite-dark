@@ -1,7 +1,8 @@
 import { inputRegistration } from './inputRegistration';
-import { createServer } from '../../../mocks/server';
+import { createServer, getDefaultResponse, resetMockCoordinator } from '../../../mocks/server';
 import { createInput } from '../../__fixtures__/input.fixture';
 import { createCoinjoinRound } from '../../__fixtures__/round.fixture';
+import { RoundPhase } from '../../enums';
 
 // mock random delay function
 jest.mock('@trezor/utils', () => {
@@ -14,6 +15,15 @@ jest.mock('@trezor/utils', () => {
     };
 });
 
+// The cases run the real credential crypto against the mock coordinator's issuer, which takes
+// seconds on a loaded CI runner.
+jest.setTimeout(60_000);
+
+// How long after its start a round stays in input registration. Every input has to register
+// before that, and the proofs of the client and of the issuer for all of them share one thread.
+// Below ROUND_SELECTION_REGISTRATION_OFFSET the requests are still sent without a delay.
+const REGISTRATION_PHASE_DURATION = 20_000;
+
 describe('inputRegistration', () => {
     let server: Awaited<ReturnType<typeof createServer>>;
 
@@ -23,6 +33,9 @@ describe('inputRegistration', () => {
 
     afterEach(() => {
         server?.removeAllListeners('test-request');
+        // The mock coordinator's credential issuer is stateful (serial numbers, balance),
+        // so each test gets a fresh round.
+        resetMockCoordinator();
     });
 
     afterAll(() => {
@@ -53,7 +66,7 @@ describe('inputRegistration', () => {
                 ],
                 {
                     ...server?.requestOptions,
-                    round: { phaseDeadline: Date.now() + 3000 },
+                    round: { phaseDeadline: Date.now() + REGISTRATION_PHASE_DURATION },
                 },
             ),
             server?.requestOptions,
@@ -74,19 +87,12 @@ describe('inputRegistration', () => {
                 url.endsWith('/input-registration') &&
                 (data.Input === 'A1' || data.Input === 'B1')
             ) {
-                // first input from each account is remixed (no coordinator fee)
+                // first input from each account is remixed (no coordinator fee).
+                // The issued credentials still have to be real, otherwise the client
+                // rejects them.
                 resolve({
-                    AliceId: data.input,
+                    ...getDefaultResponse('input-registration', data),
                     IsPayingZeroCoordinationFee: true,
-                });
-            }
-            if (url.endsWith('/get-real-credential-requests')) {
-                resolve({
-                    RealCredentialRequests: {
-                        CredentialsRequest: {
-                            Delta: data.AmountsToRequest[0],
-                        },
-                    },
                 });
             }
             resolve();
@@ -130,7 +136,7 @@ describe('inputRegistration', () => {
                 ],
                 {
                     ...server?.requestOptions,
-                    round: { phaseDeadline: Date.now() + 3000 },
+                    round: { phaseDeadline: Date.now() + REGISTRATION_PHASE_DURATION },
                 },
             ),
             server?.requestOptions,
@@ -185,7 +191,7 @@ describe('inputRegistration', () => {
                 ],
                 {
                     ...server?.requestOptions,
-                    round: { phaseDeadline: Date.now() + 3000 },
+                    round: { phaseDeadline: Date.now() + REGISTRATION_PHASE_DURATION },
                 },
             ),
             server?.requestOptions,
@@ -237,10 +243,22 @@ describe('inputRegistration', () => {
         });
     });
 
-    it('error in middleware after successful registration (input should be unregistered while still can)', async () => {
-        server?.addListener('test-request', ({ url, resolve, reject }) => {
-            if (url.endsWith('/get-real-credential-requests')) {
-                reject(500, { error: 'ExpectedRuntimeError' });
+    it('credentials the coordinator could not have issued are rejected after a successful registration (input should be unregistered while still can)', async () => {
+        // The coordinator registers the input and then answers with an issuer-parameters
+        // proof that does not verify. The client must refuse the credentials rather than
+        // go on to present them, and the input must end up excluded from the round.
+        server?.addListener('test-request', ({ url, data, resolve }) => {
+            if (url.endsWith('/input-registration')) {
+                const registration = getDefaultResponse('input-registration', data) as {
+                    AmountCredentials: { Proofs: { Responses: string[] }[] };
+                };
+                const [firstProof] = registration.AmountCredentials.Proofs;
+                // change one response scalar; the last hex digit always moves
+                const response = firstProof!.Responses[0] as string;
+                firstProof!.Responses[0] = `${response.slice(0, -1)}${
+                    response.endsWith('1') ? '2' : '1'
+                }`;
+                resolve(registration);
             }
             resolve();
         });
@@ -256,7 +274,39 @@ describe('inputRegistration', () => {
         // @ts-expect-error: indexing with noUncheckedIndexedAccess
         const firstInput: (typeof inputs)[number] = inputs[0];
         expect(firstInput.registrationData).toMatchObject({ AliceId: expect.any(String) });
-        expect(firstInput.error?.message).toMatch(/ExpectedRuntimeError/);
+        expect(firstInput.error?.message).toMatch(/ClientReceivedInvalidProofs/);
+    });
+
+    it('starts no connection-confirmation for a round that ended during the registration', async () => {
+        const round = createCoinjoinRound(
+            [createInput('account-A', 'A1', { ownershipProof: '01A1' })],
+            {
+                ...server?.requestOptions,
+                round: { phaseDeadline: Date.now() + REGISTRATION_PHASE_DURATION },
+                roundParameters: { ConnectionConfirmationTimeout: '0d 0h 0m 2s' },
+            },
+        );
+        const confirmations = jest.fn();
+        server?.addListener('test-request', ({ url, resolve }) => {
+            if (url.endsWith('/connection-confirmation')) {
+                confirmations();
+            }
+            resolve();
+            // What CoinjoinRound.end does once the coordinator has answered, while the
+            // credentials are still being computed.
+            if (url.endsWith('/input-registration')) {
+                round.phase = RoundPhase.Ended;
+            }
+        });
+
+        const response = await inputRegistration(round, server?.requestOptions);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        const [input] = response.inputs;
+        expect(input?.registrationData).toMatchObject({ AliceId: expect.any(String) });
+        expect(input?.error?.message).toBe('Round ended during input registration');
+        expect(input?.getConfirmationInterval()).toBeUndefined();
+        expect(confirmations).not.toHaveBeenCalled();
     });
 
     it('success. using connection-confirmation interval', async () => {
@@ -285,7 +335,7 @@ describe('inputRegistration', () => {
         await Promise.all(response.inputs.map(input => input.getConfirmationInterval()?.promise));
 
         expect(spy).toHaveBeenCalledTimes(3); // connection-confirmation was called 2 times: 10 sec phase deadline divided by 2 * 2.5 sec connectionConfirmationTimeout
-    }, 10000);
+    });
 
     it('success. connection-confirmation returns realCredentials (coordinator is already in phase 1)', async () => {
         const spy = jest.fn();

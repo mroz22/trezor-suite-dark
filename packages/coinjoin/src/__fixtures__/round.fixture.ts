@@ -1,3 +1,7 @@
+import {
+    AMOUNT_CREDENTIAL_ISSUER_PARAMETERS,
+    VSIZE_CREDENTIAL_ISSUER_PARAMETERS,
+} from './credentialIssuer.fixture';
 import { CoinjoinPrison } from '../client/CoinjoinPrison';
 import { CoinjoinRound } from '../client/CoinjoinRound';
 import { ROUND_SELECTION_REGISTRATION_OFFSET } from '../constants';
@@ -68,7 +72,7 @@ export const createInputAddedEvent = (Outpoint: string): CoinjoinInputAddedEvent
         Outpoint,
         TxOut: {
             ScriptPubKey: '1 fc485427c6b286466faca747ad0faf6aaf6f7ef72ef7c81a2064df3796dbea2e',
-            Value: 1,
+            Value: 1_000_000,
         },
     },
     OwnershipProof: 'not-relevant',
@@ -117,14 +121,10 @@ const DEFAULT_INPUT_REGISTRATION_START =
 const DEFAULT_ROUND_WITHOUT_ID = {
     Id: '',
     BlameOf: '0000000000000000000000000000000000000000000000000000000000000000',
-    AmountCredentialIssuerParameters: {
-        Cw: '03CFB034383C718F51182773D3AE90C0826DB752330462CAD73F81A7F0AA3CBB6C',
-        I: '032988176AD16B5414F15B44BACFE4C584AEB1D1851614BF6C614CBC5C8B9F4DC7',
-    },
-    VsizeCredentialIssuerParameters: {
-        Cw: '025E28EC14AA222CF90B00E564D3572806B7449DDB830A392257D4B9C89A4A5FAE',
-        I: '0395DFD855C84500B656BD11EB9A185FA1719F8F8C93890B836FDCB40ABEB1E454',
-    },
+    // Derived from the mock coordinator's issuer keys, so that a request built against
+    // these parameters is one the mock issuer will actually accept.
+    AmountCredentialIssuerParameters: AMOUNT_CREDENTIAL_ISSUER_PARAMETERS,
+    VsizeCredentialIssuerParameters: VSIZE_CREDENTIAL_ISSUER_PARAMETERS,
     Phase: 0,
     EndRoundState: 0,
     CoinjoinState: {

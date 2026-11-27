@@ -66,7 +66,7 @@ export class CoinjoinService {
     static async replaceClient({ symbol, prison, settings }: ReplaceClientParams) {
         const instance = this.instances[symbol];
         if (!instance) return;
-        // The new client is created first, so the main process keeps the coinjoin middleware running.
+        // The new client is created first, so the instance keeps the previous one if loading fails.
         const client = await loadClient({ ...settings, prison });
         // Removed meanwhile.
         if (this.instances[symbol] !== instance) {

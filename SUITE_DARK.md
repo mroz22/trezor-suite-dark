@@ -181,7 +181,11 @@ Ask the owner before reversing any of these.
   another coordinator, no detection of a coordinator that stops responding while Suite runs (only the check when the
   client starts, the rest goes to the log) and no custom coordinator address for now. Which coordinators the list names
   is the owner's decision; OpenCoordinator was added on 2026-11-22. Suite Dark contacts it only once the user chooses
-  it.
+  it. The client runs without the bundled WalletWasabi binary (2026-11-25): its TypeScript port, in five
+  upstream-bound commits, computes the credentials, amount decomposition, input selection, anonymity scores and
+  liquidity clue in the main process, so no .NET process runs and the installers lose about 35 MB. The owner asked for
+  the port with its three new private packages, `@trezor/wabisabi-crypto`, `@trezor/coinjoin-strategy` and
+  `@trezor/coinjoin-analysis`, and closed his upstream drafts of it to finish it here.
 - Password manager: upstream's Dropbox-based experimental feature, only renamed. Upstream does not save the
   experimental toggle (`packages/suite/src/actions/suite/storageActions.ts`), so it is off after every restart.
 - Minimal diff: prefer a default, flag or render site over editing many upstream lines; put fork-only values in
@@ -236,6 +240,13 @@ Not handled yet; fixing any of them is a fork change for the owner to approve.
   does not match its parameters, a min input count below 21, refused ownership proofs).
 - OpenCoordinator was only checked through its status on 2026-11-22 and has not mixed with Suite Dark, and changing
   the coordinator in the Coinjoin setup (`CoinjoinService.replaceClient`) has not run in the desktop app yet.
+- The TypeScript coinjoin client passed its first session on 2026-11-26: a remix of five inputs through the device
+  against kruw, broadcast after two blame rounds, with anonymity scores equal to the binary's on that wallet. Not run
+  yet: the scripted regtest round (`yarn workspace @trezor/coinjoin test:regtest`, docker backend, local keys instead
+  of a device), a coordinator that charges a fee, several Privacy accounts at once. Input selection runs one round
+  and account after another on the main process, several seconds each with many coins, where the binary ran them in
+  parallel; the client runs one selection at a time and skips a round whose input registration ends within 30 s of
+  it.
 
 ## Working here
 

@@ -8,7 +8,6 @@ import { merge } from 'webpack-merge';
 
 // eslint-disable-next-line local-rules/no-package-deep-imports -- build-only entry, kept out of the runtime index
 import {
-    NixosInterpreterPlugin,
     ShellSpawnPlugin,
     createBaseConfig,
     createDevConfig,
@@ -126,17 +125,6 @@ const rendererConfig: webpack.Configuration = {
                 isOnionLocation: FLAGS.ONION_LOCATION_META,
             },
             filename: path.join(buildDir, 'index.html'),
-        }),
-        // conditionally patch binaries on NixOS dev build
-        new NixosInterpreterPlugin({
-            cwd: baseDir,
-            files: [
-                path.join(
-                    buildDir,
-                    'static/bin/coinjoin/linux-x64',
-                    'WalletWasabi.WabiSabiClientLibrary',
-                ),
-            ],
         }),
         new ShellSpawnPlugin({
             cwd: baseDir,

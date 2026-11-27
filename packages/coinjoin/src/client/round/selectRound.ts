@@ -1,5 +1,8 @@
+import { getLiquidityClue } from '@trezor/coinjoin-analysis';
+import { selectInputsForRoundWithYields as selectUtxosForRound } from '@trezor/coinjoin-strategy';
 import type { Logger } from '@trezor/logger';
 import { arrayPartition, arrayToDictionary } from '@trezor/utils';
+import { secureRandom } from '@trezor/wabisabi-crypto';
 
 import {
     ROUND_MIN_OUTPUT_AMOUNT_SANITY,
@@ -19,7 +22,7 @@ import { getInputSize, getOutputSize } from '../../utils/coordinatorUtils';
 import { getInputRegistrationEnd, isRoundIdMatching } from '../../utils/roundHasher';
 import { type Account } from '../Account';
 import { type Round } from '../coordinator';
-import * as middleware from '../middleware';
+import { yieldToEventLoop } from '../credentials';
 
 export interface SelectRoundProps {
     roundGenerator: CoinjoinRoundGenerator;
@@ -446,7 +449,64 @@ const selectInputsForBlameRound = ({
         return false;
     });
 
-// Use middleware algorithm to process preselected CoinjoinRounds and Accounts
+type SelectAccountUtxosParams = Pick<SelectRoundProps, 'options'> & {
+    round: CoinjoinRoundShape;
+    account: ReturnType<typeof getAccountCandidates>[number];
+};
+
+// Indices of the account utxos selected for the round, none if the selection fails.
+const selectAccountUtxos = async ({
+    round,
+    account,
+    options: { logger, signal },
+}: SelectAccountUtxosParams): Promise<number[]> => {
+    const { roundParameters } = round;
+    const Utxos = account.utxos.map(utxo => ({
+        Outpoint: utxo.outpoint,
+        Amount: utxo.amount,
+        ScriptPubKey: utxo.scriptPubKey,
+        AnonymitySet: utxo.anonymityLevel as number,
+    }));
+
+    if (isRoundFeeAboveAccountLimit({ round, account, logger })) return [];
+
+    // The combination search takes seconds with many utxos, so it hands the event loop of the
+    // main process back between slices of work, and gives up there once the client is disabled.
+    const yieldUnlessAborted = () =>
+        signal.aborted ? Promise.reject(new Error('Aborted by signal')) : yieldToEventLoop();
+
+    // Derive the liquidityClue and try to select the best utxos combination for the round.
+    try {
+        const LiquidityClue = getLiquidityClue(
+            account.rawLiquidityClue,
+            roundParameters.MaxSuggestedAmount,
+        );
+        const indices = await selectUtxosForRound(
+            {
+                MiningFeeRate: roundParameters.MiningFeeRate,
+                CoordinationFeeRate: roundParameters.CoordinationFeeRate,
+                AllowedInputAmounts: roundParameters.AllowedInputAmounts,
+                AllowedOutputAmounts: roundParameters.AllowedOutputAmounts,
+                AllowedInputTypes: roundParameters.AllowedInputTypes,
+                Utxos,
+                AnonScoreTarget: account.targetAnonymity,
+                LiquidityClue,
+                SemiPrivateThreshold: 2,
+                ConsolidationMode: false,
+            },
+            secureRandom,
+            yieldUnlessAborted,
+        );
+
+        return indices.filter(i => Utxos[i]); // filter valid existing indices
+    } catch (error) {
+        logger.error(`selectInputsForRound failed ${error.message}`);
+
+        return [];
+    }
+};
+
+// Use the ported selection algorithm to process preselected CoinjoinRounds and Accounts
 export const selectInputsForRound = async ({
     aliceGenerator,
     roundCandidates,
@@ -475,71 +535,28 @@ export const selectInputsForRound = async ({
         return blameRound;
     }
 
-    const { logger } = options;
+    const { logger, signal } = options;
 
     // utxoSelection shape: array_of_rounds[ array_of_accounts[ array_of_useful_account_utxo_indexes[] ] ]
     // example for 2 roundCandidates with 3 accountCandidates: [ [ [], [], [0, 1, 2] ], [ [3], [], [0, 1, 2] ] ]
     // each account/utxo set needs to be calculated separately because of different targetAnonymity
-    const utxoSelection = await Promise.all(
-        // for each CoinjoinRound...
-        normalRounds.map(round => {
-            // ...create set of parameters
-            const { roundParameters } = round;
-            const roundConstants = {
-                MiningFeeRate: roundParameters.MiningFeeRate,
-                CoordinationFeeRate: roundParameters.CoordinationFeeRate,
-                AllowedInputAmounts: roundParameters.AllowedInputAmounts,
-                AllowedOutputAmounts: roundParameters.AllowedOutputAmounts,
-                AllowedInputTypes: roundParameters.AllowedInputTypes,
-            };
+    //
+    // One selection searches for seconds on the main process and keeps hundreds of thousands of
+    // candidate groups in memory meanwhile. Together they would take the same time, as they share
+    // one thread, with all their groups alive at once, so they run one after another.
+    const utxoSelection: number[][][] = [];
+    for (const round of normalRounds) {
+        const roundSelection: number[][] = [];
+        for (const account of normalAccounts) {
+            // A disabled client joins no round, whatever was selected before.
+            if (signal.aborted) return;
 
-            return Promise.all(
-                // ...and for each Account
-                normalAccounts.map(account => {
-                    // ...also create set of parameters (utxos)
-                    const Utxos = account.utxos.map(utxo => ({
-                        Outpoint: utxo.outpoint,
-                        Amount: utxo.amount,
-                        ScriptPubKey: utxo.scriptPubKey,
-                        AnonymitySet: utxo.anonymityLevel as number,
-                    }));
+            roundSelection.push(await selectAccountUtxos({ round, account, options }));
+        }
+        utxoSelection.push(roundSelection);
+    }
 
-                    if (isRoundFeeAboveAccountLimit({ round, account, logger })) return [];
-
-                    // ...finally call get liquidityClue and
-                    // try to select the best utxos combination for given Round
-                    return middleware
-                        .getLiquidityClue(
-                            account.rawLiquidityClue,
-                            roundParameters.MaxSuggestedAmount,
-                            { baseUrl: options.middlewareUrl },
-                        )
-                        .then(LiquidityClue =>
-                            middleware.selectInputsForRound(
-                                {
-                                    ...roundConstants,
-                                    Utxos,
-                                    AnonScoreTarget: account.targetAnonymity,
-                                    LiquidityClue,
-                                    SemiPrivateThreshold: 2,
-                                    ConsolidationMode: false,
-                                },
-                                {
-                                    signal: options.signal,
-                                    baseUrl: options.middlewareUrl,
-                                },
-                            ),
-                        )
-                        .then(indices => indices.filter(i => Utxos[i])) // filter valid existing indices
-                        .catch(error => {
-                            logger.error(`selectInputsForRound failed ${error.message}`);
-
-                            return [] as number[];
-                        });
-                }),
-            );
-        }),
-    );
+    if (signal.aborted) return;
 
     // find Round with maximum possible utxos
     const sumUtxosInRounds = utxoSelection.map(acc => acc.reduce((a, b) => a + b.length, 0));
@@ -554,6 +571,16 @@ export const selectInputsForRound = async ({
     const roundIndex = sumUtxosInRounds.findIndex(count => count === maxUtxosInRound);
     // @ts-expect-error: indexing with noUncheckedIndexedAccess
     const selectedRound: (typeof normalRounds)[number] = normalRounds[roundIndex];
+
+    // The selections took seconds each. With too little input registration left, every input
+    // would register at once (see inputRegistration), which links them, so leave the round to
+    // the next selection.
+    const registrationLeft = new Date(selectedRound.inputRegistrationEnd).getTime() - Date.now();
+    if (registrationLeft <= ROUND_SELECTION_REGISTRATION_OFFSET) {
+        logger.info(`Skipping round ~~${selectedRound.id}~~. Its input registration ends too soon`);
+
+        return;
+    }
 
     // setup new Round
     accountCandidates.forEach((account, accountIndex) => {
@@ -570,7 +597,8 @@ export const selectInputsForRound = async ({
             return utxo;
         });
 
-        // Temporary workaround for middleware issue: https://github.com/zkSNACKs/WalletWasabi/issues/10759
+        // Temporary workaround for an upstream issue, reproduced by the port:
+        // https://github.com/zkSNACKs/WalletWasabi/issues/10759
         const feeRate = selectedRound.roundParameters.MiningFeeRate;
         const inputFee = Math.floor((getInputSize(account.scriptType) * feeRate) / 1000);
         const outputFee = Math.floor((getOutputSize(account.scriptType) * feeRate) / 1000);
